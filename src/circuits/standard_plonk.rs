@@ -108,6 +108,13 @@ impl<F: FieldExt> Circuit<F> for StandardPlonk<F> {
                 region.assign_fixed(|| "", config.constant, 2, || Value::known(c))?;
 
                 // EXERCISE: can you compute x^2 + 72 in one row?
+                let val_new = x.value().map(|x| (*x * x) + c);
+                x.copy_advice(|| "", &mut region, config.a, 3)?;
+                x.copy_advice(|| "", &mut region, config.b, 3)?;
+                region.assign_advice(|| "", config.c, 3, || val_new)?;
+                region.assign_fixed(|| "", config.q_c, 3, || Value::known(-F::one()))?;
+                region.assign_fixed(|| "", config.q_ab, 3, || Value::known(F::one()))?;
+                region.assign_fixed(|| "", config.constant, 3, || Value::known(c))?;
 
                 Ok(())
             },
