@@ -1,10 +1,14 @@
 # coding: utf-8
+# 32.32 fixed point decimal with its arithmetic (mul and exp)
+# [ref] https://github.com/XMunkki/FixPointCS/blob/c701f57c3cfe6478d1f6fd7578ae040c59386b3d/Cpp/Fixed64.h
+# [ref] https://github.com/abdk-consulting/abdk-libraries-solidity/blob/master/ABDKMath64x64.sol
 import math
 RCP_LN2 = 0x171547652
 
 def Qmul30(a, b):
     return a * b >> 30;
 
+# precision: 18.19 bits
 def Exp2Poly4(a):
     y = Qmul30(a, 14555373)
     y = Qmul30(a, y + 55869331)
