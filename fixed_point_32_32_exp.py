@@ -18,17 +18,24 @@ def Exp2Poly4(a):
     return y
 
 def Exp2Fast(x):
-    k = int((x / 0x100000000) / 4)
-    y = Exp2Poly4(k) * 4
-    intPart = x / 0x100000000
+    k = int(x) % 0x100000000
+    k = int(k / 0x4)
+    y = Exp2Poly4(k)
+    y = y * 4
+    intPart = int(x / 0x100000000)
     # You must use lookup table to implement 2**intPart for intPart in Z[-32, 32]
-    return y * (2**(intPart))
+    intPart = 2**intPart
+    tmp = y * intPart
+    return tmp
 
 def Mul(a, b):
     return a * b / 0x100000000
 
 def Exp(x):
-    return int(Exp2Fast(Mul(x, RCP_LN2)))
+    tmp = Mul(x, RCP_LN2)
+    tmp = int(Exp2Fast(tmp))
+    print('exp result {} {:02x}'.format(tmp, int(tmp)))
+    return tmp
 
 abs = lambda x: x if x >= 0 else -x
 err = lambda x: abs((Exp(x * 0x100000000) / 0x100000000) - math.exp(x))

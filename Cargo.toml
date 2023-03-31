@@ -13,9 +13,9 @@ ark-std = { version = "0.3.0", features = ["print-trace"] }
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
 
 # Axiom's helper API with basic functions 
-halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", branch = "axiom-dev-0301" }
+halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
 # Axiom poseidon chip (adapted from Scroll)
-poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", branch = "axiom-dev-0301" }
+poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
 
 log = "0.4"
 env_logger = "0.10"
@@ -23,8 +23,18 @@ env_logger = "0.10"
 [dev-dependencies]
 test-log = "0.2.11"
 
+[dependencies.num-integer]
+version = "0.1.42"
+features = ["i128"]
+default-features = false
+
+[dependencies.num-traits]
+version = "0.2.11"
+features = ["i128"]
+default-features = false
+
 [features]
-default = []
+default = ["num-integer/std", "num-traits/std"]
 
 # Dev / testing mode. We make opt-level = 3 to improve proving times (otherwise it is really slow)
 [profile.dev]
