@@ -42,7 +42,6 @@ impl<F: ScalarField> FixedPointConfig<F> {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub struct FixedPointChip<F: ScalarField> {
     strategy: FixedPointStrategy,
@@ -64,11 +63,12 @@ impl<F: ScalarField> FixedPointChip<F> {
 }
 
 pub trait FixedPointInstructions<F: ScalarField> {
-    /// fixed point decimal and its arithmetic functions.
+    /// Fixed point decimal and its arithmetic functions.
     /// [ref] https://github.com/XMunkki/FixPointCS/blob/c701f57c3cfe6478d1f6fd7578ae040c59386b3d/Cpp/Fixed64.h
     /// [ref] https://github.com/abdk-consulting/abdk-libraries-solidity/blob/master/ABDKMath64x64.sol
     ///
-    /// [TODO] (Wentao XIAO) add more configurable precision, e.g., 64.64
+    /// TODO (Wentao XIAO) add more configurable precision, e.g., 64.64
+    /// TODO (Wentao XIAO) now FixedPointChip only works on positve numbers, should support negative numbers in the future
     type Gate: GateInstructions<F>;
 
     fn gate(&self) -> &Self::Gate;
@@ -84,7 +84,7 @@ pub trait FixedPointInstructions<F: ScalarField> {
     where
         F: BigPrimeField;
     
-    /// Return the approximation of exp2 with poly4. Precision: 18.19 bits
+    /// Return the approximation of exp2 with poly4 which is something like Taylor expansion. Precision: 18.19 bits
     fn exp2poly4(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
     where
         F: BigPrimeField;
@@ -105,7 +105,6 @@ pub trait FixedPointInstructions<F: ScalarField> {
         F: BigPrimeField;
 
     /// exp
-    /// TODO (Wentao XIAO) support negative numbers
     fn exp(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
     where
         F: BigPrimeField;

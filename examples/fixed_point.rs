@@ -46,6 +46,22 @@ fn main() {
     let x1 = Fr::from_u128((0x100000000i64 as f64 * 17.0) as u128);
     mock(some_algorithm_in_zk, x1);
 
+    let x2 = Fr::from_u128((0x100000000i64 as f64 * 2.0) as u128);
+    mock(some_algorithm_in_zk, x2);
+
+    let x3 = Fr::from_u128((0x100000000i64 as f64 * 0.0) as u128);
+    mock(some_algorithm_in_zk, x3);
+
     // uncomment below to run actual prover:
-    // prove(some_algorithm_in_zk, x, Fr::zero()); // the Fr::zero() is a dummy input to provide for the proving key generation
+    // this code will works fine
+    prove(some_algorithm_in_zk, x1, Fr::from_u128(
+        (0x100000000i64 as f64 * 17.0) as u128)
+    ); // the 3rd parameter is a dummy input to provide for the proving key generation
+
+    // NOTE (Wentao XIAO) but if we change private_inputs to a different value compared with dummy_inputs
+    // NOTE (Wentao XIAO) the prove will failed with ConstraintSystemFailure
+    // NOTE (Wentao XIAO) uncomment the following lines to reproduce this error:
+    // prove(some_algorithm_in_zk, x1, Fr::from_u128(
+    //     (0x100000000i64 as f64 * 2.1) as u128)
+    // );
 }
