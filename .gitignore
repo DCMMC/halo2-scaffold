@@ -15,3 +15,4 @@ Cargo.lock
 /target
 .vscode/launch.json
 params/kzg_bn254_18.srs
+params

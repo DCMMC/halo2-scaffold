@@ -1,9 +1,9 @@
 use halo2_base::{
-    utils::{ScalarField, fe_to_biguint, biguint_to_fe, BigPrimeField}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
+    utils::{ScalarField, BigPrimeField}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
     QuantumCell, Context, AssignedValue
 };
-use halo2_base::QuantumCell::{Constant, Existing, Witness};
-use num_integer::Integer;
+use halo2_base::QuantumCell::{Constant, Existing};
+use num_bigint::BigUint;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FixedPointStrategy {
@@ -118,7 +118,7 @@ pub trait FixedPointInstructions<F: ScalarField> {
 
     /// div mod and rem, e.g., 103 / 100 = 1 ... 3 will return 1 and 3
     fn div_mod(
-        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<QuantumCell<F>>
+        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<BigUint>
     ) -> (AssignedValue<F>, AssignedValue<F>)
     where
         F: BigPrimeField;
@@ -150,7 +150,7 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let ab = self.gate().mul(ctx, a, b);
-        let (ab30, _) = self.div_mod(ctx, Existing(ab), Constant(F::from(1 << 30)));
+        let (ab30, _) = self.div_mod(ctx, Existing(ab), 1u128 << 30);
         ab30
     }
 
@@ -181,22 +181,21 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let y0 = self.gate().mul(ctx, a, b);
-        let (y1, _) = self.div_mod(ctx, y0, Constant(F::from(0x100000000)));
+        let (y1, _) = self.div_mod(ctx, y0, 0x100000000u128);
 
         y1
     }
 
     fn div_mod(
-        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<QuantumCell<F>>
+        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<BigUint>
     ) -> (AssignedValue<F>, AssignedValue<F>)
     where
         F: BigPrimeField,
     {
         let a = a.into();
         let b = b.into();
-        let a_num_bits = self.precision_bits / 2  + 4;
-        let b_num_bits = self.precision_bits / 2 + 2;
-        let (div, rem) = self.range_gate().div_mod_var(ctx, a, b, a_num_bits, b_num_bits);
+        let a_num_bits = 254;
+        let (div, rem) = self.range_gate().div_mod(ctx, a, b, a_num_bits);
 
         (div, rem)
     }
@@ -206,11 +205,11 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let a = a.into();
-        let (_, k_rem) = self.div_mod(ctx, a, Constant(F::from(0x100000000)));
-        let (k, _) = self.div_mod(ctx, k_rem, Constant(F::from(4)));
+        let (_, k_rem) = self.div_mod(ctx, a, 0x100000000u128);
+        let (k, _) = self.div_mod(ctx, k_rem, 4u128);
         let y0 = self.exp2poly4(ctx, k);
         let y1 = self.gate().mul(ctx, y0, Constant(F::from(4)));
-        let (int_part, _) = self.div_mod(ctx, a, Constant(F::from(0x100000000)));
+        let (int_part, _) = self.div_mod(ctx, a, 0x100000000u128);
         let int_part_exp2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
         let res = self.gate().mul(ctx, y1, Constant(int_part_exp2));
 

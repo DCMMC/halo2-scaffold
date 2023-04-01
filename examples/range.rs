@@ -5,7 +5,8 @@ use halo2_base::{AssignedValue, Context};
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
 use rand::random;
-use std::env::var;
+use std::env::{var, set_var};
+use halo2_base::halo2_proofs::arithmetic::FieldExt;
 
 fn some_algorithm_in_zk<F: ScalarField>(
     ctx: &mut Context<F>,
@@ -27,7 +28,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
     let range = RangeChip::default(lookup_bits);
 
     // check that `x` is in [0, 2^64)
-    range.range_check(ctx, x, 64);
+    range.range_check(ctx, x, 100);
 
     // RangeChip contains GateChip so you can still do basic operations:
     let _sum = range.gate().add(ctx, x, x);
@@ -35,11 +36,13 @@ fn some_algorithm_in_zk<F: ScalarField>(
 
 fn main() {
     env_logger::init();
+    set_var("LOOKUP_BITS", 10.to_string());
+    set_var("DEGREE", 11.to_string());
 
     // run mock prover
     mock(some_algorithm_in_zk, Fr::from(random::<u64>()));
     mock(some_algorithm_in_zk, Fr::from(1 << 32 + 1));
 
     // uncomment below to run actual prover:
-    // prove(some_algorithm_in_zk, Fr::from(random::<u64>()), Fr::zero());
+    prove(some_algorithm_in_zk, Fr::from_u128(1u128 << 63 + 1), Fr::one());
 }
