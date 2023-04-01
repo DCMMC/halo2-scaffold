@@ -6,6 +6,7 @@ use halo2_proofs::halo2curves::FieldExt;
 use halo2_scaffold::gadget::fixed_point::{FixedPointChip, FixedPointInstructions};
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
+use std::env::{var, set_var};
 
 fn some_algorithm_in_zk<F: ScalarField>(
     ctx: &mut Context<F>,
@@ -21,8 +22,11 @@ fn some_algorithm_in_zk<F: ScalarField>(
     // we can make it public like so:
     make_public.push(x);
 
+    // lookup bits must agree with the size of the lookup table, which is specified by an environmental variable
+    let lookup_bits =
+        var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
     // fixed-point exp arithmetic
-    let fixed_point_chip = FixedPointChip::<F>::default();
+    let fixed_point_chip = FixedPointChip::<F>::default(lookup_bits);
     let exp_1 = fixed_point_chip.exp(ctx, x);
     let x_decimal = (x.value().get_lower_128() as f64) / (0x100000000i64 as f64);
     let y_decimal = (exp_1.value().get_lower_128() as f64) / (0x100000000i64 as f64);
@@ -38,30 +42,32 @@ fn some_algorithm_in_zk<F: ScalarField>(
 
 fn main() {
     env_logger::init();
+    set_var("LOOKUP_BITS", 28.to_string());
+    set_var("DEGREE", 29.to_string());
 
     // run mock prover
     let x0 = Fr::from_u128((0x100000000i64 as f64 * 1.0) as u128);
     mock(some_algorithm_in_zk, x0);
 
-    let x1 = Fr::from_u128((0x100000000i64 as f64 * 17.0) as u128);
-    mock(some_algorithm_in_zk, x1);
+    // let x1 = Fr::from_u128((0x100000000i64 as f64 * 17.0) as u128);
+    // mock(some_algorithm_in_zk, x1);
 
-    let x2 = Fr::from_u128((0x100000000i64 as f64 * 2.0) as u128);
-    mock(some_algorithm_in_zk, x2);
+    // let x2 = Fr::from_u128((0x100000000i64 as f64 * 2.0) as u128);
+    // mock(some_algorithm_in_zk, x2);
 
-    let x3 = Fr::from_u128((0x100000000i64 as f64 * 0.0) as u128);
-    mock(some_algorithm_in_zk, x3);
+    // let x3 = Fr::from_u128((0x100000000i64 as f64 * 0.0) as u128);
+    // mock(some_algorithm_in_zk, x3);
 
     // uncomment below to run actual prover:
     // this code will works fine
-    prove(some_algorithm_in_zk, x1, Fr::from_u128(
-        (0x100000000i64 as f64 * 17.0) as u128)
-    ); // the 3rd parameter is a dummy input to provide for the proving key generation
+    // prove(some_algorithm_in_zk, x1, Fr::from_u128(
+    //     (0x100000000i64 as f64 * 17.0) as u128)
+    // ); // the 3rd parameter is a dummy input to provide for the proving key generation
 
     // NOTE (Wentao XIAO) but if we change private_inputs to a different value compared with dummy_inputs
     // NOTE (Wentao XIAO) the prove will failed with ConstraintSystemFailure
     // NOTE (Wentao XIAO) uncomment the following lines to reproduce this error:
-    // prove(some_algorithm_in_zk, x1, Fr::from_u128(
-    //     (0x100000000i64 as f64 * 2.1) as u128)
-    // );
+    prove(some_algorithm_in_zk, x0, Fr::from_u128(
+        (0x100000000i64 as f64 * 2.1) as u128)
+    );
 }

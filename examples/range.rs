@@ -38,6 +38,7 @@ fn main() {
 
     // run mock prover
     mock(some_algorithm_in_zk, Fr::from(random::<u64>()));
+    mock(some_algorithm_in_zk, Fr::from(1 << 32 + 1));
 
     // uncomment below to run actual prover:
     // prove(some_algorithm_in_zk, Fr::from(random::<u64>()), Fr::zero());

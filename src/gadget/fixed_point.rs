@@ -1,6 +1,6 @@
 use halo2_base::{
-    utils::{ScalarField, fe_to_biguint, biguint_to_fe, BigPrimeField}, gates::{GateChip, GateInstructions, flex_gate::{FlexGateConfig, GateStrategy}},
-    QuantumCell, Context, AssignedValue, halo2_proofs::plonk::ConstraintSystem
+    utils::{ScalarField, fe_to_biguint, biguint_to_fe, BigPrimeField}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
+    QuantumCell, Context, AssignedValue
 };
 use halo2_base::QuantumCell::{Constant, Existing, Witness};
 use num_integer::Integer;
@@ -10,55 +10,60 @@ pub enum FixedPointStrategy {
     Vertical, // vanilla implementation with vertical basic gate(s)
 }
 
-#[derive(Clone, Debug)]
-pub struct FixedPointConfig<F: ScalarField> {
-    pub gate: FlexGateConfig<F>,
-    _strategy: FixedPointStrategy,
-}
+// #[derive(Clone, Debug)]
+// pub struct FixedPointConfig<F: ScalarField> {
+//     pub gate: FlexGateConfig<F>,
+//     _strategy: FixedPointStrategy,
+// }
 
-impl<F: ScalarField> FixedPointConfig<F> {
-    pub fn configure(
-        meta: &mut ConstraintSystem<F>,
-        range_strategy: FixedPointStrategy,
-        num_advice: &[usize],
-        num_fixed: usize,
-        circuit_degree: usize,
-    ) -> Self {
-        let gate = FlexGateConfig::configure(
-            meta,
-            match range_strategy {
-                FixedPointStrategy::Vertical => GateStrategy::Vertical,
-            },
-            num_advice,
-            num_fixed,
-            circuit_degree,
-        );
-        let mut config =
-            Self { gate, _strategy: range_strategy };
+// impl<F: ScalarField> FixedPointConfig<F> {
+//     pub fn configure(
+//         meta: &mut ConstraintSystem<F>,
+//         range_strategy: FixedPointStrategy,
+//         num_advice: &[usize],
+//         num_fixed: usize,
+//         circuit_degree: usize,
+//     ) -> Self {
+//         let gate = FlexGateConfig::configure(
+//             meta,
+//             match range_strategy {
+//                 FixedPointStrategy::Vertical => GateStrategy::Vertical,
+//             },
+//             num_advice,
+//             num_fixed,
+//             circuit_degree,
+//         );
+//         let mut config =
+//             Self { gate, _strategy: range_strategy };
 
-        config.gate.max_rows = 1 << circuit_degree;
+//         config.gate.max_rows = 1 << circuit_degree;
 
-        config
-    }
-}
+//         config
+//     }
+// }
 
 #[derive(Clone, Debug)]
 pub struct FixedPointChip<F: ScalarField> {
     strategy: FixedPointStrategy,
-    pub gate: GateChip<F>
+    pub gate: RangeChip<F>,
+    pub precision_bits: usize
 }
 
 impl<F: ScalarField> FixedPointChip<F> {
-    pub fn new(strategy: FixedPointStrategy) -> Self {
-        let gate = GateChip::new(match strategy {
-            FixedPointStrategy::Vertical => GateStrategy::Vertical,
-        });
+    pub fn new(strategy: FixedPointStrategy, lookup_bits: usize) -> Self {
+        let gate = RangeChip::new(
+            match strategy {
+                FixedPointStrategy::Vertical => RangeStrategy::Vertical,
+            },
+            lookup_bits
+        );
+        let precision_bits = 64;
 
-        Self { strategy, gate }
+        Self { strategy, gate, precision_bits }
     }
 
-    pub fn default() -> Self {
-        Self::new(FixedPointStrategy::Vertical)
+    pub fn default(lookup_bits: usize) -> Self {
+        Self::new(FixedPointStrategy::Vertical, lookup_bits)
     }
 }
 
@@ -70,8 +75,10 @@ pub trait FixedPointInstructions<F: ScalarField> {
     /// TODO (Wentao XIAO) add more configurable precision, e.g., 64.64
     /// TODO (Wentao XIAO) now FixedPointChip only works on positve numbers, should support negative numbers in the future
     type Gate: GateInstructions<F>;
+    type RangeGate: RangeInstructions<F>;
 
     fn gate(&self) -> &Self::Gate;
+    fn range_gate(&self) -> &Self::RangeGate;
     fn strategy(&self) -> FixedPointStrategy;
 
     /// Return qmul30 of a and b for 32.32 fixed point deciamls
@@ -110,7 +117,7 @@ pub trait FixedPointInstructions<F: ScalarField> {
         F: BigPrimeField;
 
     /// div mod and rem, e.g., 103 / 100 = 1 ... 3 will return 1 and 3
-    fn div_mod_unsafe(
+    fn div_mod(
         &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<QuantumCell<F>>
     ) -> (AssignedValue<F>, AssignedValue<F>)
     where
@@ -119,10 +126,16 @@ pub trait FixedPointInstructions<F: ScalarField> {
 
 impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
     type Gate = GateChip<F>;
+    type RangeGate = RangeChip<F>;
 
-    fn gate(&self) -> &Self::Gate {
+    fn range_gate(&self) -> &Self::RangeGate {
         &self.gate
     }
+
+    fn gate(&self) -> &Self::Gate {
+        &self.gate.gate()
+    }
+
     fn strategy(&self) -> FixedPointStrategy {
         self.strategy
     }
@@ -137,7 +150,7 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let ab = self.gate().mul(ctx, a, b);
-        let (ab30, _) = self.div_mod_unsafe(ctx, Existing(ab), Constant(F::from(1 << 30)));
+        let (ab30, _) = self.div_mod(ctx, Existing(ab), Constant(F::from(1 << 30)));
         ab30
     }
 
@@ -168,12 +181,12 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let y0 = self.gate().mul(ctx, a, b);
-        let (y1, _) = self.div_mod_unsafe(ctx, y0, Constant(F::from(0x100000000)));
+        let (y1, _) = self.div_mod(ctx, y0, Constant(F::from(0x100000000)));
 
         y1
     }
 
-    fn div_mod_unsafe(
+    fn div_mod(
         &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<QuantumCell<F>>
     ) -> (AssignedValue<F>, AssignedValue<F>)
     where
@@ -181,16 +194,11 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
     {
         let a = a.into();
         let b = b.into();
-        let a_val = fe_to_biguint(a.value());
-        let b_val = fe_to_biguint(b.value());
-        let (div, rem) = a_val.div_mod_floor(&b_val);
-        let div_fe: F = biguint_to_fe(&div);
-        let rem_fe: F = biguint_to_fe(&rem);
-        ctx.assign_region([Witness(rem_fe), Constant(*b.value()), Witness(div_fe), a], [0]);
-        let div_ret = ctx.get(-2);
-        let rem_ret = ctx.get(-4);
+        let a_num_bits = self.precision_bits / 2  + 4;
+        let b_num_bits = self.precision_bits / 2 + 2;
+        let (div, rem) = self.range_gate().div_mod_var(ctx, a, b, a_num_bits, b_num_bits);
 
-        (div_ret, rem_ret)
+        (div, rem)
     }
 
     fn exp2fast(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
@@ -198,11 +206,11 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let a = a.into();
-        let (_, k_rem) = self.div_mod_unsafe(ctx, a, Constant(F::from(0x100000000)));
-        let (k, _) = self.div_mod_unsafe(ctx, k_rem, Constant(F::from(4)));
+        let (_, k_rem) = self.div_mod(ctx, a, Constant(F::from(0x100000000)));
+        let (k, _) = self.div_mod(ctx, k_rem, Constant(F::from(4)));
         let y0 = self.exp2poly4(ctx, k);
         let y1 = self.gate().mul(ctx, y0, Constant(F::from(4)));
-        let (int_part, _) = self.div_mod_unsafe(ctx, a, Constant(F::from(0x100000000)));
+        let (int_part, _) = self.div_mod(ctx, a, Constant(F::from(0x100000000)));
         let int_part_exp2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
         let res = self.gate().mul(ctx, y1, Constant(int_part_exp2));
 
