@@ -52,8 +52,9 @@ fn some_algorithm_in_zk<F: ScalarField>(
 
 fn main() {
     env_logger::init();
-    set_var("LOOKUP_BITS", 11.to_string());
-    set_var("DEGREE", 12.to_string());
+    // genrally lookup_bits is degree - 1
+    set_var("LOOKUP_BITS", 8.to_string());
+    set_var("DEGREE", 9.to_string());
 
     // run mock prover
     let x0 = Fr::from_u128((0x100000000i64 as f64 * 0.0) as u128);
