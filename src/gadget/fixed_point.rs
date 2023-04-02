@@ -2,7 +2,7 @@ use halo2_base::{
     utils::{ScalarField, BigPrimeField}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
     QuantumCell, Context, AssignedValue
 };
-use halo2_base::QuantumCell::{Constant, Existing};
+use halo2_base::QuantumCell::{Constant, Existing, Witness};
 use num_bigint::BigUint;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,7 +57,8 @@ impl<F: ScalarField> FixedPointChip<F> {
             },
             lookup_bits
         );
-        let precision_bits = 64;
+        // 128 = 96 + 32
+        let precision_bits = 128;
 
         Self { strategy, gate, precision_bits }
     }
@@ -150,7 +151,9 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let ab = self.gate().mul(ctx, a, b);
+        self.range_gate().range_check(ctx, ab, self.precision_bits);
         let (ab30, _) = self.div_mod(ctx, Existing(ab), 1u128 << 30);
+
         ab30
     }
 
@@ -160,13 +163,13 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
     {
         let a = a.into();
         let y0 = self.qmul30(ctx, a, Constant(F::from(14555373)));
-        let y01 = self.gate().add(ctx, y0, Constant(F::from(55869331)));
-        let y1 = self.qmul30(ctx, a, y01);
-        let y11 = self.gate().add(ctx, y1, Constant(F::from(259179547)));
-        let y2 = self.qmul30(ctx, a, y11);
-        let y21 = self.gate().add(ctx, y2, Constant(F::from(744137573)));
-        let y3 = self.qmul30(ctx, a, y21);
-        let y4 = self.gate().add(ctx, y3, Constant(F::from(1073741824)));
+        let y01 = self.gate().add(ctx, Existing(y0), Constant(F::from(55869331)));
+        let y1 = self.qmul30(ctx, a, Existing(y01));
+        let y11 = self.gate().add(ctx, Existing(y1), Constant(F::from(259179547)));
+        let y2 = self.qmul30(ctx, a, Existing(y11));
+        let y21 = self.gate().add(ctx, Existing(y2), Constant(F::from(744137573)));
+        let y3 = self.qmul30(ctx, a, Existing(y21));
+        let y4 = self.gate().add(ctx, Existing(y3), Constant(F::from(1073741824)));
         
         y4
     }
@@ -181,7 +184,8 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         F: BigPrimeField,
     {
         let y0 = self.gate().mul(ctx, a, b);
-        let (y1, _) = self.div_mod(ctx, y0, 0x100000000u128);
+        self.range_gate().range_check(ctx, y0, self.precision_bits);
+        let (y1, _) = self.div_mod(ctx, Existing(y0), 0x100000000u128);
 
         y1
     }
@@ -192,9 +196,7 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
     where
         F: BigPrimeField,
     {
-        let a = a.into();
-        let b = b.into();
-        let a_num_bits = 254;
+        let a_num_bits = self.precision_bits;
         let (div, rem) = self.range_gate().div_mod(ctx, a, b, a_num_bits);
 
         (div, rem)
@@ -206,12 +208,19 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
     {
         let a = a.into();
         let (_, k_rem) = self.div_mod(ctx, a, 0x100000000u128);
-        let (k, _) = self.div_mod(ctx, k_rem, 4u128);
-        let y0 = self.exp2poly4(ctx, k);
-        let y1 = self.gate().mul(ctx, y0, Constant(F::from(4)));
+        let (k, _) = self.div_mod(ctx, Existing(k_rem), 4u128);
+        let y0 = self.exp2poly4(ctx, Existing(k));
+        self.range_gate().range_check(ctx, y0, self.precision_bits);
+        let y1 = self.gate().mul(ctx, Existing(y0), Constant(F::from(4)));
         let (int_part, _) = self.div_mod(ctx, a, 0x100000000u128);
-        let int_part_exp2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
-        let res = self.gate().mul(ctx, y1, Constant(int_part_exp2));
+        let int_part_pow2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
+        // NOTE (Wentao XIAO) be very careful of Witness, Constant, and Existing!
+        // NOTE (Wentao XIAO) because `int_part_pow2` is calculated outside the gate (use `int_part` as the index to get the pow_of_two),
+        // NOTE (Wentao XIAO) we must wrap it using Witness instead of Constant.
+        // NOTE (Wentao XIAO) Constant is used for wrapping a constant value and this value does not change for any input.
+        // NOTE (Wentao XIAO) Existing is used for wrapping an AssignedValue to QuantumCell.
+        let res = self.gate().mul(ctx, Existing(y1), Witness(int_part_pow2));
+        self.range_gate().range_check(ctx, res, self.precision_bits);
 
         res
     }
@@ -223,7 +232,9 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         let a = a.into();
         let rcp_ln2 = Constant(F::from(0x171547652));
         let y0 = self.mul(ctx, a, rcp_ln2);
-        let y1 = self.exp2fast(ctx, y0);
+        self.range_gate().range_check(ctx, y0, self.precision_bits);
+        let y1 = self.exp2fast(ctx, Existing(y0));
+        self.range_gate().range_check(ctx, y1, self.precision_bits);
 
         y1
     }

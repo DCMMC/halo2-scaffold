@@ -27,6 +27,16 @@ fn some_algorithm_in_zk<F: ScalarField>(
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
     // fixed-point exp arithmetic
     let fixed_point_chip = FixedPointChip::<F>::default(lookup_bits);
+
+    // Sanity checks
+    let test1 = fixed_point_chip.qmul30(ctx, x, x);
+    make_public.push(test1);
+    assert_eq!(x.value().get_lower_128() * x.value().get_lower_128() / (1u128 << 30), test1.value().get_lower_128());
+
+    let test2 = fixed_point_chip.mul(ctx, x, x);
+    make_public.push(test2);
+    assert_eq!(x.value().get_lower_128() * x.value().get_lower_128() / 0x100000000u128, test2.value().get_lower_128());
+
     let exp_1 = fixed_point_chip.exp(ctx, x);
     let x_decimal = (x.value().get_lower_128() as f64) / (0x100000000i64 as f64);
     let y_decimal = (exp_1.value().get_lower_128() as f64) / (0x100000000i64 as f64);
@@ -37,7 +47,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
         (y_decimal - y_native).abs(), (y_decimal - y_native).abs() / y_native.abs() * 100.0
     );
 
-    make_public.push(exp_1);
+    // make_public.push(exp_1);
 }
 
 fn main() {
@@ -62,21 +72,15 @@ fn main() {
     mock(some_algorithm_in_zk, x4);
 
     // uncomment below to run actual prover:
-    // this code will works fine
     // the 3rd parameter is a dummy input to provide for the proving key generation
-    prove(some_algorithm_in_zk, x2, x2.clone());
-
-    // NOTE (Wentao XIAO) if the different between private_input and dummy_inputs is large, will get ConstraintSystemFailure
-    // NOTE (Wentao XIAO) but why?
     prove(
         some_algorithm_in_zk,
         x3,
-        x3.sub(&Fr::from_u128((0x100000000i64 as f64 * 0.24) as u128))
+        x3.sub(&Fr::from_u128((0x100000000i64 as f64 * 3.0) as u128))
     );
-    // NOTE (Wentao XIAO) for example, this code will throw ConstraintSystemFailure
-    // prove(
-    //     some_algorithm_in_zk,
-    //     x3,
-    //     x3.sub(&Fr::from_u128((0x100000000i64 as f64 * 0.25) as u128))
-    // );
+    prove(
+        some_algorithm_in_zk,
+        x3,
+        x1
+    );
 }
