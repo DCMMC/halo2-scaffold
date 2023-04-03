@@ -28,7 +28,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
     let range = RangeChip::default(lookup_bits);
 
     // check that `x` is in [0, 2^64)
-    range.range_check(ctx, x, 100);
+    range.range_check(ctx, x, 32);
 
     // RangeChip contains GateChip so you can still do basic operations:
     let _sum = range.gate().add(ctx, x, x);
@@ -40,9 +40,9 @@ fn main() {
     set_var("DEGREE", 11.to_string());
 
     // run mock prover
-    mock(some_algorithm_in_zk, Fr::from(random::<u64>()));
-    mock(some_algorithm_in_zk, Fr::from(1 << 32 + 1));
+    // mock(some_algorithm_in_zk, Fr::from(random::<u64>()));
+    mock(some_algorithm_in_zk, Fr::from(1 << 31));
 
     // uncomment below to run actual prover:
-    prove(some_algorithm_in_zk, Fr::from_u128(1u128 << 63 + 1), Fr::one());
+    // prove(some_algorithm_in_zk, Fr::from_u128(1u128 << 63 + 1), Fr::one());
 }

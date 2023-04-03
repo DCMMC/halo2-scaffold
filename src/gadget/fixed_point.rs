@@ -123,6 +123,10 @@ pub trait FixedPointInstructions<F: ScalarField> {
     ) -> (AssignedValue<F>, AssignedValue<F>)
     where
         F: BigPrimeField;
+    
+    fn check_power_of_two(&self, ctx: &mut Context<F>, pow2_exponent: AssignedValue<F>, exponent: AssignedValue<F>)
+    where
+        F: BigPrimeField;
 }
 
 impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
@@ -202,6 +206,28 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         (div, rem)
     }
 
+    fn check_power_of_two(&self, ctx: &mut Context<F>, pow2_exponent: AssignedValue<F>, exponent: AssignedValue<F>)
+    where
+        F: BigPrimeField,
+    {
+        let range_bits = self.precision_bits;
+        let bits = self.gate().num_to_bits(ctx, pow2_exponent, range_bits);
+        let sum_of_bits = self.gate().sum(ctx, bits.clone());
+        let sum_of_bits_m1 = self.gate().sub(ctx, sum_of_bits, Constant(F::one()));
+        let is_zero = self.gate().is_zero(ctx, sum_of_bits_m1);
+        // ensure the bits of pow2_exponent has only one of bit one.
+        self.gate().assert_is_const(ctx, &is_zero, &F::one());
+        let bit = self.gate().select_from_idx(
+            ctx, 
+            bits.into_iter().map(|x| Existing(x)), 
+            exponent
+        );
+        let bit_m1 = self.gate().sub(ctx, bit, Constant(F::one()));
+        let is_zero_bit_m1 = self.gate().is_zero(ctx, bit_m1);
+        // ensures bits[expnent] is exact bit one
+        self.gate().assert_is_const(ctx, &is_zero_bit_m1, &F::one());
+    }
+
     fn exp2fast(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
     where
         F: BigPrimeField,
@@ -214,12 +240,10 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         let y1 = self.gate().mul(ctx, Existing(y0), Constant(F::from(4)));
         let (int_part, _) = self.div_mod(ctx, a, 0x100000000u128);
         let int_part_pow2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
-        // NOTE (Wentao XIAO) be very careful of Witness, Constant, and Existing!
-        // NOTE (Wentao XIAO) because `int_part_pow2` is calculated outside the gate (use `int_part` as the index to get the pow_of_two),
-        // NOTE (Wentao XIAO) we must wrap it using Witness instead of Constant.
-        // NOTE (Wentao XIAO) Constant is used for wrapping a constant value and this value does not change for any input.
-        // NOTE (Wentao XIAO) Existing is used for wrapping an AssignedValue to QuantumCell.
-        let res = self.gate().mul(ctx, Existing(y1), Witness(int_part_pow2));
+        // NOTE (Wentao XIAO) to make use of int_part_pow2 as a Witness, we must first check it's a correct pow2 of int_part.
+        let int_part_pow2_witness = self.gate().add(ctx, Witness(int_part_pow2), Constant(F::zero()));
+        self.check_power_of_two(ctx, int_part_pow2_witness, int_part);
+        let res = self.gate().mul(ctx, Existing(y1), int_part_pow2_witness);
         self.range_gate().range_check(ctx, res, self.precision_bits);
 
         res
