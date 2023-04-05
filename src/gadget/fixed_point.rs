@@ -46,25 +46,28 @@ pub enum FixedPointStrategy {
 pub struct FixedPointChip<F: ScalarField> {
     strategy: FixedPointStrategy,
     pub gate: RangeChip<F>,
-    pub precision_bits: usize
+    pub precision_bits: usize,
+    pub zero_point: F
 }
 
 impl<F: ScalarField> FixedPointChip<F> {
-    pub fn new(strategy: FixedPointStrategy, lookup_bits: usize) -> Self {
+    pub fn new(strategy: FixedPointStrategy, lookup_bits: usize, precision_bits: usize) -> Self {
         let gate = RangeChip::new(
             match strategy {
                 FixedPointStrategy::Vertical => RangeStrategy::Vertical,
             },
             lookup_bits
         );
-        // 128 = 96 + 32
-        let precision_bits = 128;
+        assert!(precision_bits % 2 == 0, "precision_bits must be even");
+        assert!(precision_bits == 32, "at present we only support 32.32 fixed point decimals");
+        // NOTE (Wentao) x' = -1 * (x - zero_point)
+        let zero_point = F::from_u128((0 + (1 << precision_bits)-1 - ((1 << (precision_bits/2))-1)) / 2);
 
-        Self { strategy, gate, precision_bits }
+        Self { strategy, gate, precision_bits, zero_point }
     }
 
     pub fn default(lookup_bits: usize) -> Self {
-        Self::new(FixedPointStrategy::Vertical, lookup_bits)
+        Self::new(FixedPointStrategy::Vertical, lookup_bits, 64)
     }
 }
 
@@ -92,7 +95,7 @@ pub trait FixedPointInstructions<F: ScalarField> {
     where
         F: BigPrimeField;
     
-    /// Return the approximation of exp2 with poly4 which is something like Taylor expansion. Precision: 18.19 bits
+    /// Return the approximation of exp2 with poly fitting. Precision: 18.19 bits
     fn exp2poly4(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
     where
         F: BigPrimeField;
