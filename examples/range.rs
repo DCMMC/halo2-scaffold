@@ -27,39 +27,42 @@ fn some_algorithm_in_zk<F: ScalarField>(
     let range = RangeChip::default(lookup_bits);
 
     // check that `x` is in [0, 2^64)
-    let range_bits = 32;
-    let [x, lower, upper] = values.map(
-        |x| ctx.load_witness(x));
-    make_public.extend([x, lower, upper]);
+    let range_bits = 64;
+    let x = ctx.load_witness(values[0]);
+    let lower = Constant(values[1]);
+    let upper = Constant(values[2]);
+    make_public.extend([x]);
     range.range_check(ctx, x, range_bits);
-    range.range_check(ctx, lower, range_bits);
-    range.range_check(ctx, upper, range_bits);
+    // range.range_check(ctx, lower, range_bits);
+    // range.range_check(ctx, upper, range_bits);
     range.is_less_than(ctx, lower, upper, range_bits);
     let a = range.is_less_than(ctx, x, lower, range_bits);
-    let b = range.is_less_than(ctx, a, upper, range_bits);
-    let c = range.gate().add(ctx, a, Constant(F::one()));
-    let d = range.gate().and(ctx, c, b);
-    range.gate().assert_bit(ctx, d);
-    let e = range.gate().sub(ctx, d, Constant(F::one()));
-    let out = range.gate().is_zero(ctx, e);
-    println!("range check: {:?}", out.value());
+    let b = range.is_less_than(ctx, x, upper, range_bits);
+    let out_a = range.gate().is_equal(ctx, a, Constant(F::zero()));
+    let out_b = range.gate().is_equal(ctx, b, Constant(F::one()));
+    let out_ab = range.gate().and(ctx, out_a, out_b);
+    let out = range.gate().is_equal(ctx, out_ab, Constant(F::one()));
+    println!("range check: {:?} <= {:?} < {:?} : {:?}", lower.value(), x.value(), upper.value(), out.value());
     make_public.push(out);
 
     // RangeChip contains GateChip so you can still do basic operations:
-    let _sum = range.gate().add(ctx, x, x);
+    // let _sum = range.gate().add(ctx, x, x);
 }
 
 fn main() {
     env_logger::init();
-    set_var("LOOKUP_BITS", 10.to_string());
-    set_var("DEGREE", 11.to_string());
+    set_var("LOOKUP_BITS", 9.to_string());
+    // Must has at least 20 degree to generate the aggregated proof with the recursived ZK
+    set_var("DEGREE", 20.to_string());
+    set_var("GEN_AGG_EVM", "zk_range_agg_evm.code");
 
     // run mock prover
     mock(some_algorithm_in_zk, [Fr::from(101), Fr::from(100), Fr::from(200)]);
+    mock(some_algorithm_in_zk, [Fr::from(201), Fr::from(100), Fr::from(200)]);
 
     // uncomment below to run actual prover:
     prove(
         some_algorithm_in_zk, 
         [Fr::from(101), Fr::from(100), Fr::from(200)], 
-        [Fr::from(40), Fr::from(20), Fr::from(30)]);
+        [Fr::from(99), Fr::from(100), Fr::from(200)]);
 }

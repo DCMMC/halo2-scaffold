@@ -13,11 +13,16 @@ ark-std = { version = "0.3.0", features = ["print-trace"] }
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
 
 # Axiom's helper API with basic functions 
-halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
+halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7", default-features = false, features = ["halo2-pse", "halo2-pse"] }
 # Axiom poseidon chip (adapted from Scroll)
-poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
+# poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
 
 num-bigint = "0.4"
+snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-verifier", tag = "v2023_02_02"}
+serde_json = { version = "1.0.64" }
+serde = { version = "1.0.126", features = ["derive"] }
+ezkl-lib = { git = "https://github.com/zkonduit/ezkl", rev = "8b4f543" }
+subtle = "2.4.1"
 
 log = "0.4"
 env_logger = "0.10"
