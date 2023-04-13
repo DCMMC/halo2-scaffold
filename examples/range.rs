@@ -54,7 +54,7 @@ fn main() {
     set_var("LOOKUP_BITS", 9.to_string());
     // Must has at least 20 degree to generate the aggregated proof with the recursived ZK
     set_var("DEGREE", 20.to_string());
-    set_var("GEN_AGG_EVM", "zk_range_agg_evm.code");
+    set_var("GEN_AGG_EVM", "params/zk_range_agg_evm.code");
 
     // run mock prover
     mock(some_algorithm_in_zk, [Fr::from(101), Fr::from(100), Fr::from(200)]);

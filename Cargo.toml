@@ -22,7 +22,7 @@ snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-
 serde_json = { version = "1.0.64" }
 serde = { version = "1.0.126", features = ["derive"] }
 ezkl-lib = { git = "https://github.com/zkonduit/ezkl", rev = "8b4f543" }
-subtle = "2.4.1"
+bitvec = "1"
 
 log = "0.4"
 env_logger = "0.10"

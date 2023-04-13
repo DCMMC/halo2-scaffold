@@ -3,81 +3,133 @@ use halo2_base::{
     QuantumCell, Context, AssignedValue
 };
 use halo2_base::QuantumCell::{Constant, Existing, Witness};
+use halo2_proofs::dev::metadata::Constraint;
 use num_bigint::BigUint;
+use bitvec::{order::Lsb0, vec::BitVec};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FixedPointStrategy {
     Vertical, // vanilla implementation with vertical basic gate(s)
 }
 
-// #[derive(Clone, Debug)]
-// pub struct FixedPointConfig<F: ScalarField> {
-//     pub gate: FlexGateConfig<F>,
-//     _strategy: FixedPointStrategy,
-// }
-
-// impl<F: ScalarField> FixedPointConfig<F> {
-//     pub fn configure(
-//         meta: &mut ConstraintSystem<F>,
-//         range_strategy: FixedPointStrategy,
-//         num_advice: &[usize],
-//         num_fixed: usize,
-//         circuit_degree: usize,
-//     ) -> Self {
-//         let gate = FlexGateConfig::configure(
-//             meta,
-//             match range_strategy {
-//                 FixedPointStrategy::Vertical => GateStrategy::Vertical,
-//             },
-//             num_advice,
-//             num_fixed,
-//             circuit_degree,
-//         );
-//         let mut config =
-//             Self { gate, _strategy: range_strategy };
-
-//         config.gate.max_rows = 1 << circuit_degree;
-
-//         config
-//     }
-// }
-
+/// `PRECISION_BITS` indicates the precision of integer and fractional parts.
+/// For example, `PRECISION_BITS = 32` indicates this chip implements 32.32 fixed point decimal arithmetics.
+/// The valid range of the fixed point decimal is -max_value < x < max_value.
 #[derive(Clone, Debug)]
-pub struct FixedPointChip<F: ScalarField> {
+pub struct FixedPointChip<F: ScalarField, const PRECISION_BITS: u32> {
     strategy: FixedPointStrategy,
     pub gate: RangeChip<F>,
-    pub precision_bits: usize,
-    pub zero_point: F
+    pub quantization_scale: F,
+    pub max_value: F,
+    pub min_value: F,
+    pub bn254_max: F,
+    pub negative_point: F,
+    pub lookup_bits: usize,
 }
 
-impl<F: ScalarField> FixedPointChip<F> {
-    pub fn new(strategy: FixedPointStrategy, lookup_bits: usize, precision_bits: usize) -> Self {
+fn u128_to_scalar<F: ScalarField>(x: u128) -> F {
+    let x_biguint = BigUint::from(x);
+    biguint_to_scalar(x_biguint)
+}
+
+fn biguint_to_scalar<F: ScalarField>(x: BigUint) -> F {
+    let x_biguint = x.to_bytes_le();
+    let mut x_bytes_le = [0u8; 64];
+    for (idx, val) in x_biguint.iter().enumerate() {
+        x_bytes_le[idx] = *val;
+    }
+    let x_f = F::from_bytes_wide(&x_bytes_le);
+
+    x_f
+}
+
+impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS> {
+    pub fn new(strategy: FixedPointStrategy, lookup_bits: usize) -> Self {
+        assert!(PRECISION_BITS <= 63, "support only precision bits <= 63");
+        assert!(PRECISION_BITS >= 8, "support only precision bits >= 8");
         let gate = RangeChip::new(
             match strategy {
                 FixedPointStrategy::Vertical => RangeStrategy::Vertical,
             },
             lookup_bits
         );
-        assert!(precision_bits % 2 == 0, "precision_bits must be even");
-        assert!(precision_bits == 32, "at present we only support 32.32 fixed point decimals");
-        // NOTE (Wentao) x' = -1 * (x - zero_point)
-        let zero_point = F::from_u128((0 + (1 << precision_bits)-1 - ((1 << (precision_bits/2))-1)) / 2);
+        // Simple uniform symmetric quantization scheme which enforces zero point to be exactly 0
+        // to reduce lots of computations.
+        // Quantization: x_q = xS where S is `quantization_scale`
+        // De-quantization: x = x_q / S
+        let quantization_scale = u128_to_scalar(2u128.pow(PRECISION_BITS as u32));
+        // Becuase BN254 is cyclic, negative number will be denoted as (-x) % m = m - x where m = 2^254,
+        // in this chip, we treat all x > negative_point as a negative numbers.
+        let bn254_max = biguint_to_scalar(BigUint::from(2u32).pow(254u32).sub(1u32));
+        // -max_value % m = negative_point
+        let negative_point = bn254_max - u128_to_scalar::<F>(2u128.pow(PRECISION_BITS * 2 + 1)) + F::one();
+        // min_value < x < max_value
+        let max_value = u128_to_scalar(2u128.pow(PRECISION_BITS*2));
+        let min_value = biguint_to_scalar(BigUint::from(2u32).pow(254u32).sub(
+            BigUint::from(2u128.pow(PRECISION_BITS*2))));
 
-        Self { strategy, gate, precision_bits, zero_point }
+        Self { strategy, gate, quantization_scale, max_value, min_value, bn254_max, negative_point, lookup_bits }
     }
 
     pub fn default(lookup_bits: usize) -> Self {
-        Self::new(FixedPointStrategy::Vertical, lookup_bits, 64)
+        Self::new(FixedPointStrategy::Vertical, lookup_bits)
+    }
+
+    pub fn quantization(&self, x: f64) -> F {
+        let sign = x.signum();
+        let x = x.abs();
+        let x_q = (x * self.quantization_scale.get_lower_128() as f64).round() as u128;
+        let x_q_biguint = BigUint::from(x_q).to_bytes_le();
+        let mut x_q_bytes_le = [0u8; 64];
+        for (idx, val) in x_q_biguint.iter().enumerate() {
+            x_q_bytes_le[idx] = *val;
+        }
+        let mut x_q_f = F::from_bytes_wide(&x_q_bytes_le);
+        if sign < 0.0 {
+            x_q_f = self.bn254_max - x_q_f;
+        }
+
+        x_q_f
+    }
+
+    pub fn dequantization(&self, x: F) -> f64 {
+        let mut x_mut = x;
+        let negative = if x > self.negative_point {
+            x_mut = x - self.negative_point + F::one();
+            -1f64
+        } else {
+            1f64
+        };
+        let x_u128: u128 = x_mut.get_lower_128();
+        let quantization_scale = self.quantization_scale.get_lower_128();
+        let x_int = (x_u128 / quantization_scale) as f64;
+        let x_frac = (x_u128 % quantization_scale) as f64 / quantization_scale as f64;
+        let x_deq = negative * (x_int + x_frac);
+
+        x_deq
+    }
+
+    fn generate_exp_poly(&self) -> Vec<F> {
+        // generated by remez algorithm, poly degree 12, precision bits: 64.28
+        let coef: Vec<F> = [
+            3.6240421303547230336183979205877e-11, 4.1284327467833130245549169910389e-10,
+            0.0000000071086385644026346316624185550542, 0.00000010172297085296590958930245291448,
+            0.0000013215904023658396206789543841996, 0.000015252713316417140696221389106544,
+            0.00015403531076657894204857389177279, 0.0013333558131297097698435464957392,
+            0.0096181291078409107025643582456283, 0.055504108664804181586140094858174,
+            0.24022650695910142332414229540187, 0.69314718055994529934452147700678,
+            1.0
+        ].into_iter().map(|c| self.quantization(c)).collect();
+
+        coef
     }
 }
 
-pub trait FixedPointInstructions<F: ScalarField> {
+pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     /// Fixed point decimal and its arithmetic functions.
     /// [ref] https://github.com/XMunkki/FixPointCS/blob/c701f57c3cfe6478d1f6fd7578ae040c59386b3d/Cpp/Fixed64.h
     /// [ref] https://github.com/abdk-consulting/abdk-libraries-solidity/blob/master/ABDKMath64x64.sol
     ///
-    /// TODO (Wentao XIAO) add more configurable precision, e.g., 64.64
-    /// TODO (Wentao XIAO) now FixedPointChip only works on positve numbers, should support negative numbers in the future
     type Gate: GateInstructions<F>;
     type RangeGate: RangeInstructions<F>;
 
@@ -85,54 +137,107 @@ pub trait FixedPointInstructions<F: ScalarField> {
     fn range_gate(&self) -> &Self::RangeGate;
     fn strategy(&self) -> FixedPointStrategy;
 
-    /// Return qmul30 of a and b for 32.32 fixed point deciamls
-    fn qmul30(
+    fn qabs(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    fn is_neg(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    fn polynomial<QA>(
+        &self,
+        ctx: &mut Context<F>,
+        x: impl Into<QuantumCell<F>>,
+        coef: impl IntoIterator<Item = QA>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField, QA: Into<QuantumCell<F>>;
+
+    fn qadd(
         &self,
         ctx: &mut Context<F>,
         a: impl Into<QuantumCell<F>>,
         b: impl Into<QuantumCell<F>>
     ) -> AssignedValue<F>
-    where
-        F: BigPrimeField;
-    
-    /// Return the approximation of exp2 with poly fitting. Precision: 18.19 bits
-    fn exp2poly4(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
-    where
-        F: BigPrimeField;
+    where 
+        F: BigPrimeField
+    {
+        self.gate().add(ctx, a, b)
+    }
 
-    /// Return mul of a and b for 32.32 fixed point decimals
-    fn mul(
+    fn qsub(
         &self,
         ctx: &mut Context<F>,
         a: impl Into<QuantumCell<F>>,
         b: impl Into<QuantumCell<F>>
     ) -> AssignedValue<F>
-    where
-        F: BigPrimeField;
-
-    /// exp2fast
-    fn exp2fast(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
-    where
-        F: BigPrimeField;
-
-    /// exp
-    fn exp(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
-    where
-        F: BigPrimeField;
-
-    /// div mod and rem, e.g., 103 / 100 = 1 ... 3 will return 1 and 3
-    fn div_mod(
-        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<BigUint>
-    ) -> (AssignedValue<F>, AssignedValue<F>)
-    where
+    where 
+        F: BigPrimeField
+    {
+        self.gate().sub(ctx, a, b)
+    }
+    
+    fn qmul(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
         F: BigPrimeField;
     
+    fn qdiv(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    fn qmod(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    /// exp2
+    fn qexp2(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    /// log
+    // fn qlog(
+    //     &self,
+    //     ctx: &mut Context<F>,
+    //     a: impl Into<QuantumCell<F>>
+    // ) -> AssignedValue<F>
+    // where 
+    //     F: BigPrimeField;
+    
+    /// sin
+    // fn qsin(
+    //     &self,
+    //     ctx: &mut Context<F>,
+    //     a: impl Into<QuantumCell<F>>
+    // ) -> AssignedValue<F>
+    // where 
+    //     F: BigPrimeField;
+
     fn check_power_of_two(&self, ctx: &mut Context<F>, pow2_exponent: AssignedValue<F>, exponent: AssignedValue<F>)
     where
         F: BigPrimeField;
 }
 
-impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
+impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECISION_BITS> for FixedPointChip<F, PRECISION_BITS> {
     type Gate = GateChip<F>;
     type RangeGate = RangeChip<F>;
 
@@ -148,72 +253,126 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         self.strategy
     }
 
-    fn qmul30(
-        &self,
-        ctx: &mut Context<F>,
-        a: impl Into<QuantumCell<F>>,
-        b: impl Into<QuantumCell<F>>
-    ) -> AssignedValue<F>
-    where
-        F: BigPrimeField,
-    {
-        let ab = self.gate().mul(ctx, a, b);
-        self.range_gate().range_check(ctx, ab, self.precision_bits);
-        let (ab30, _) = self.div_mod(ctx, Existing(ab), 1u128 << 30);
-
-        ab30
-    }
-
-    fn exp2poly4(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
-    where
-        F: BigPrimeField,
+    fn qabs(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
     {
         let a = a.into();
-        let y0 = self.qmul30(ctx, a, Constant(F::from(14555373)));
-        let y01 = self.gate().add(ctx, Existing(y0), Constant(F::from(55869331)));
-        let y1 = self.qmul30(ctx, a, Existing(y01));
-        let y11 = self.gate().add(ctx, Existing(y1), Constant(F::from(259179547)));
-        let y2 = self.qmul30(ctx, a, Existing(y11));
-        let y21 = self.gate().add(ctx, Existing(y2), Constant(F::from(744137573)));
-        let y3 = self.qmul30(ctx, a, Existing(y21));
-        let y4 = self.gate().add(ctx, Existing(y3), Constant(F::from(1073741824)));
-        
-        y4
+        let a_reverse = self.qsub(ctx, Constant(self.bn254_max), a);
+        let is_neg = self.is_neg(ctx, a);
+        let a_abs = self.gate().select(ctx, a_reverse, a, is_neg);
+
+        a_abs
     }
 
-    fn mul(
+    fn is_neg(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let a_assigned = self.qadd(ctx, a, Constant(F::zero()));
+        let a_bits = self.gate().num_to_bits(ctx, a_assigned, 254);
+        // for example, PRECISION_BITS = 63, then neg_point_bits = 1..10..0 where has 127 ones and 217 zeros
+        let neg_point_bits: Vec<QuantumCell<F>> = BitVec::<_, Lsb0>::from_vec(
+            (BigUint::from(2u32).pow(254u32) - 2u128.pow(PRECISION_BITS * 2 + 1)).to_bytes_le()
+        ).into_iter().map(|x| Constant(F::from_u128(x as u128))).collect();
+        let inner_product = self.gate().inner_product(ctx, a_bits, neg_point_bits);
+        let is_pos = self.gate().is_zero(ctx, inner_product);
+        let is_neg = self.gate().not(ctx, is_pos);
+
+        is_neg
+    }
+
+    fn qmul(
         &self,
         ctx: &mut Context<F>,
         a: impl Into<QuantumCell<F>>,
         b: impl Into<QuantumCell<F>>
     ) -> AssignedValue<F>
-    where
-        F: BigPrimeField,
+    where 
+        F: BigPrimeField
     {
-        let y0 = self.gate().mul(ctx, a, b);
-        self.range_gate().range_check(ctx, y0, self.precision_bits);
-        let (y1, _) = self.div_mod(ctx, Existing(y0), 0x100000000u128);
+        let num_bits = PRECISION_BITS as usize * 2;
+        let ab = self.gate().mul(ctx, a, b);
+        let (ab_rescale, _) = self.range_gate().div_mod(
+            ctx, Existing(ab), self.quantization_scale.get_lower_128(), num_bits
+        );
 
-        y1
+        ab_rescale
     }
 
-    fn div_mod(
-        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, b: impl Into<BigUint>
-    ) -> (AssignedValue<F>, AssignedValue<F>)
-    where
-        F: BigPrimeField,
+    fn qmod(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
     {
-        let a_num_bits = self.precision_bits;
-        let (div, rem) = self.range_gate().div_mod(ctx, a, b, a_num_bits);
+        let num_bits = PRECISION_BITS as usize * 2;
+        let a_rescale = self.gate().mul(ctx, a, Constant(self.quantization_scale));
+        let (_, res) = self.range_gate().div_mod_var(
+            ctx, a_rescale, b, num_bits, num_bits
+        );
 
-        (div, rem)
+        res
+    }
+
+    fn qdiv(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        // Because a_rescale \in [0, 2^{2p}) and b \in [0, 2^p)
+        let a_num_bits = PRECISION_BITS as usize * 4;
+        let b_num_bits = PRECISION_BITS as usize * 2;
+        let a_rescale = self.gate().mul(ctx, a, Constant(self.quantization_scale));
+        let (res, _) = self.range_gate().div_mod_var(
+            ctx, a_rescale, b, a_num_bits, b_num_bits
+        );
+
+        res
+    }
+
+    fn polynomial<QA>(
+        &self,
+        ctx: &mut Context<F>,
+        x: impl Into<QuantumCell<F>>,
+        coef: impl IntoIterator<Item = QA>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField, QA: Into<QuantumCell<F>>
+    {
+        let x = x.into();
+        let mut intermediates = vec![Constant(F::zero())];
+        let coef_iter: Vec<QA> = coef.into_iter().collect();
+        let last_idx_coef = coef_iter.len() - 1;
+        let mut result: AssignedValue<F> = self.qadd(ctx, x, Constant(F::zero()));
+        for (idx, c) in coef_iter.into_iter().enumerate() {
+            let last_y = *intermediates.get(intermediates.len() - 1).unwrap();
+            let y_add = self.qadd(ctx, last_y, c);
+            intermediates.push(Existing(y_add));
+            if idx < last_idx_coef {
+                let y = self.qmul(ctx, x, Existing(y_add));
+                intermediates.push(Existing(y));
+            } else {
+                result = y_add;
+            }
+        }
+
+        result
     }
 
     fn check_power_of_two(&self, ctx: &mut Context<F>, pow2_exponent: AssignedValue<F>, exponent: AssignedValue<F>)
     where
         F: BigPrimeField,
     {
-        let range_bits = self.precision_bits;
+        let range_bits = PRECISION_BITS as usize * 2;
         let bits = self.gate().num_to_bits(ctx, pow2_exponent, range_bits);
         let sum_of_bits = self.gate().sum(ctx, bits.clone());
         let sum_of_bits_m1 = self.gate().sub(ctx, sum_of_bits, Constant(F::one()));
@@ -231,38 +390,34 @@ impl<F: ScalarField> FixedPointInstructions<F> for FixedPointChip<F> {
         self.gate().assert_is_const(ctx, &is_zero_bit_m1, &F::one());
     }
 
-    fn exp2fast(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
-    where
-        F: BigPrimeField,
-    {
-        let a = a.into();
-        let (_, k_rem) = self.div_mod(ctx, a, 0x100000000u128);
-        let (k, _) = self.div_mod(ctx, Existing(k_rem), 4u128);
-        let y0 = self.exp2poly4(ctx, Existing(k));
-        self.range_gate().range_check(ctx, y0, self.precision_bits);
-        let y1 = self.gate().mul(ctx, Existing(y0), Constant(F::from(4)));
-        let (int_part, _) = self.div_mod(ctx, a, 0x100000000u128);
-        let int_part_pow2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
-        // NOTE (Wentao XIAO) to make use of int_part_pow2 as a Witness, we must first check it's a correct pow2 of int_part.
-        let int_part_pow2_witness = self.gate().add(ctx, Witness(int_part_pow2), Constant(F::zero()));
-        self.check_power_of_two(ctx, int_part_pow2_witness, int_part);
-        let res = self.gate().mul(ctx, Existing(y1), int_part_pow2_witness);
-        self.range_gate().range_check(ctx, res, self.precision_bits);
-
-        res
-    }
-
-    fn exp(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
-    where
+    fn qexp2(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
         F: BigPrimeField
     {
         let a = a.into();
-        let rcp_ln2 = Constant(F::from(0x171547652));
-        let y0 = self.mul(ctx, a, rcp_ln2);
-        self.range_gate().range_check(ctx, y0, self.precision_bits);
-        let y1 = self.exp2fast(ctx, Existing(y0));
-        self.range_gate().range_check(ctx, y1, self.precision_bits);
+        let a_abs = self.qabs(ctx, a);
+        let num_bits = PRECISION_BITS as usize * 2;
+        let shift = 2u128.pow(PRECISION_BITS);
+        let (int_part, frac_part) = self.range_gate().div_mod(
+            ctx, Existing(a_abs), shift, num_bits);
+        // int_part will be small as large number leads to overflow.
+        let int_part_pow2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
+        // to make use of int_part_pow2 as a Witness, we must first check it's a correct pow2 of int_part.
+        let int_part_pow2_witness = self.gate().add(ctx, Witness(int_part_pow2), Constant(F::zero()));
+        self.check_power_of_two(ctx, int_part_pow2_witness, int_part);
+        let coef: Vec<QuantumCell<F>> = self.generate_exp_poly().iter().map(|x| Constant(*x)).collect();
+        let y_frac = self.polynomial(ctx, frac_part, coef);
+        let res_pos = self.gate().mul(ctx, Existing(int_part_pow2_witness), Existing(y_frac));
 
-        y1
+        let one = Constant(u128_to_scalar(shift));
+        let res_neg = self.qdiv(ctx, one, res_pos);
+        let is_neg = self.is_neg(ctx, a);
+        let res = self.gate().select(ctx, res_neg, res_pos, is_neg);
+
+        res
     }
 }
