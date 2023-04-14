@@ -27,12 +27,12 @@ pub struct FixedPointChip<F: ScalarField, const PRECISION_BITS: u32> {
     pub lookup_bits: usize,
 }
 
-fn u128_to_scalar<F: ScalarField>(x: u128) -> F {
+pub fn u128_to_scalar<F: ScalarField>(x: u128) -> F {
     let x_biguint = BigUint::from(x);
     biguint_to_scalar(x_biguint)
 }
 
-fn biguint_to_scalar<F: ScalarField>(x: BigUint) -> F {
+pub fn biguint_to_scalar<F: ScalarField>(x: BigUint) -> F {
     let x_biguint = x.to_bytes_le();
     let mut x_bytes_le = [0u8; 64];
     for (idx, val) in x_biguint.iter().enumerate() {
@@ -145,6 +145,17 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     where 
         F: BigPrimeField;
 
+    fn sign(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    /// clip the value to ensure it's in the valid range: (-2^p, 2^p), i.e., simulate overflow
+    /// Warning: assuome a < 2^{p+1},This may fail silently if a is too large
+    /// (e.g., mul of two large number leads to 2^{2p}).
+    fn clip(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
     fn polynomial<QA>(
         &self,
         ctx: &mut Context<F>,
@@ -163,7 +174,9 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     where 
         F: BigPrimeField
     {
-        self.gate().add(ctx, a, b)
+        let res = self.gate().add(ctx, a, b);
+
+        res
     }
 
     fn qsub(
@@ -175,7 +188,9 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     where 
         F: BigPrimeField
     {
-        self.gate().sub(ctx, a, b)
+        let res = self.gate().sub(ctx, a, b);
+
+        res
     }
     
     fn qmul(
@@ -258,7 +273,7 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         F: BigPrimeField
     {
         let a = a.into();
-        let a_reverse = self.qsub(ctx, Constant(self.bn254_max), a);
+        let a_reverse = self.gate().sub(ctx, Constant(self.bn254_max), a);
         let is_neg = self.is_neg(ctx, a);
         let a_abs = self.gate().select(ctx, a_reverse, a, is_neg);
 
@@ -270,7 +285,7 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         F: BigPrimeField
     {
         let a = a.into();
-        let a_assigned = self.qadd(ctx, a, Constant(F::zero()));
+        let a_assigned = self.gate().add(ctx, a, Constant(F::zero()));
         let a_bits = self.gate().num_to_bits(ctx, a_assigned, 254);
         // for example, PRECISION_BITS = 63, then neg_point_bits = 1..10..0 where has 127 ones and 217 zeros
         let neg_point_bits: Vec<QuantumCell<F>> = BitVec::<_, Lsb0>::from_vec(
@@ -281,6 +296,37 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         let is_neg = self.gate().not(ctx, is_pos);
 
         is_neg
+    }
+
+    fn sign(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let pos_one = Constant(F::one());
+        // (-1) % m where m = 2^254
+        let neg_one = self.gate().sub(ctx, Constant(F::zero()), pos_one);
+        let is_neg = self.is_neg(ctx, a);
+        let res = self.gate().select(ctx, neg_one, pos_one, is_neg);
+
+        res
+    }
+
+    fn clip(&self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let sign = self.sign(ctx, a);
+        let a_abs = self.qabs(ctx, a);
+        // assume a < 2^{p+1}
+        let a_num_bits = PRECISION_BITS as usize * 2 + 1;
+        let m = BigUint::from(2u32).pow(PRECISION_BITS * 2);
+        // clipped = a % m
+        // TODO (Wentao XIAO) should we just throw panic when overflow?
+        let (_, unsigned_cliped) = self.range_gate().div_mod(ctx, a_abs, m, a_num_bits);
+        let clipped = self.gate().mul(ctx, sign, unsigned_cliped);
+
+        clipped
     }
 
     fn qmul(

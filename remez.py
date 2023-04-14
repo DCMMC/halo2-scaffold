@@ -38,7 +38,7 @@ import numpy.polynomial as P
 import numpy.polynomial.chebyshev as C
 
 # set precision
-dps = 64
+dps = 32
 mp.mp.dps = dps
 mp.mp.pretty = True
 
@@ -316,7 +316,7 @@ def writeCoefficients(file, name, maxError, order, segments):
 
 		for ndx in reversed(range(order + 1)):
 			c = p.coef[ndx]
-			ic = (int)(c * (1 << 64) + 0.5)
+			ic = (int)(c * (1 << 32) + 0.5)
 			# file.write(f'\t\t\tconst int C{ndx} = {ic}; // {c}\n')
 
 			if ndx == len(p.coef)-1:
