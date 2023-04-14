@@ -9,6 +9,8 @@ use ezkl_lib::{pfsys::{Snark, evm::{aggregation::{AggregationCircuit, PoseidonTr
 use halo2_proofs::{poly::{kzg::{multiopen::ProverGWC, strategy::AccumulatorStrategy, commitment::ParamsKZG}, commitment::ParamsProver}, plonk::VerifyingKey, halo2curves::bn256::Fq};
 use serde::{Deserialize, Serialize};
 use snark_verifier::{system::halo2::{compile, Config, transcript::evm::EvmTranscript}, loader::{native::NativeLoader, evm::{EvmLoader, compile_yul, encode_calldata, ExecutorBuilder, Address}}, verifier::{plonk::{PlonkVerifier, PlonkProof}, SnarkVerifier}, pcs::kzg::{KzgDecidingKey, KzgAs, Gwc19, LimbsEncoding}};
+// use snark_verifier_sdk::halo2::aggregation::PublicAggregationCircuit;
+
 use halo2_base::{
     gates::{
         builder::{GateCircuitBuilder, GateThreadBuilder, RangeCircuitBuilder},
@@ -108,6 +110,7 @@ pub fn gen_aggregation_evm_verifier(
         code: compile_yul(&loader.yul_code()),
     })
 }
+
 /// Verify by executing bytecode with instance variables and proof as input
 pub fn evm_verify(
     deployment_code: DeploymentCode,
@@ -116,7 +119,7 @@ pub fn evm_verify(
     debug!("evm deployment code length: {:?}", deployment_code.len());
 
     let calldata = encode_calldata(&snark.instances, &snark.proof);
-    debug!("calldata size: {:?}", calldata.len());
+    debug!("calldata size: {:?}, instances: {:?}", calldata.len(), snark.instances);
     let mut evm = ExecutorBuilder::default()
         .with_gas_limit(u64::MAX.into())
         .build();
@@ -289,6 +292,7 @@ pub fn prove<T>(
     let mut assigned_instances = vec![];
     f(builder.main(0), private_inputs, &mut assigned_instances);
     let public_io: Vec<Fr> = assigned_instances.iter().map(|v| *v.value()).collect();
+    debug!("public_io: {:?}", public_io);
     let num_instance = vec![public_io.len()]; 
     let assigned_instances_copy = assigned_instances.clone();
     // once again, we have a pre-determined way to break up the builder "threads" into an optimal
@@ -356,7 +360,7 @@ pub fn prove<T>(
             let deployment_code = gen_aggregation_evm_verifier(
                 &params,
                 &agg_vk,
-                AggregationCircuit::num_instance(),
+                agg_circuit.num_instance(),
                 AggregationCircuit::accumulator_indices(),
             ).unwrap();
             let deployment_code_path = PathBuf::from(gen_agg_evm_file.clone());
@@ -372,7 +376,7 @@ pub fn prove<T>(
                 &agg_pk,
                 ezkl_lib::commands::TranscriptType::EVM,
                 AccumulatorStrategy::new(&params),
-                ezkl_lib::circuit::base::CheckMode::UNSAFE,
+                ezkl_lib::circuit::base::CheckMode::SAFE,
             ).unwrap();
             snark_proof.save(&agg_proof_path).unwrap();
             let code = DeploymentCode::load(&deployment_code_path).unwrap();

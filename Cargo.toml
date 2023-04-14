@@ -21,7 +21,7 @@ num-bigint = "0.4"
 snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-verifier", tag = "v2023_02_02"}
 serde_json = { version = "1.0.64" }
 serde = { version = "1.0.126", features = ["derive"] }
-ezkl-lib = { git = "https://github.com/zkonduit/ezkl", rev = "8b4f543" }
+ezkl-lib = { git = "https://github.com/DCMMC/ezkl", branch = "public-aggregation-chip" }
 bitvec = "1"
 thiserror = "1.0"
 
