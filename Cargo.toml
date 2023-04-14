@@ -23,6 +23,7 @@ serde_json = { version = "1.0.64" }
 serde = { version = "1.0.126", features = ["derive"] }
 ezkl-lib = { git = "https://github.com/zkonduit/ezkl", rev = "8b4f543" }
 bitvec = "1"
+thiserror = "1.0"
 
 log = "0.4"
 env_logger = "0.10"
