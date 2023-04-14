@@ -13,17 +13,12 @@ ark-std = { version = "0.3.0", features = ["print-trace"] }
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
 
 # Axiom's helper API with basic functions 
-halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7", default-features = false, features = ["halo2-pse", "halo2-pse"] }
+halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", branch = "axiom-dev-0406" }
 # Axiom poseidon chip (adapted from Scroll)
-# poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
+poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", branch = "axiom-dev-0406" }
 
 num-bigint = "0.4"
-snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-verifier", tag = "v2023_02_02"}
-serde_json = { version = "1.0.64" }
-serde = { version = "1.0.126", features = ["derive"] }
-ezkl-lib = { git = "https://github.com/DCMMC/ezkl", branch = "public-aggregation-chip" }
 bitvec = "1"
-thiserror = "1.0"
 
 log = "0.4"
 env_logger = "0.10"
@@ -31,18 +26,8 @@ env_logger = "0.10"
 [dev-dependencies]
 test-log = "0.2.11"
 
-[dependencies.num-integer]
-version = "0.1.42"
-features = ["i128"]
-default-features = false
-
-[dependencies.num-traits]
-version = "0.2.11"
-features = ["i128"]
-default-features = false
-
 [features]
-default = ["num-integer/std", "num-traits/std"]
+default = []
 
 # Dev / testing mode. We make opt-level = 3 to improve proving times (otherwise it is really slow)
 [profile.dev]

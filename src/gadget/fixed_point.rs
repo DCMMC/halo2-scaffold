@@ -1,9 +1,10 @@
+use std::ops::Sub;
+
 use halo2_base::{
     utils::{ScalarField, BigPrimeField}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
     QuantumCell, Context, AssignedValue
 };
 use halo2_base::QuantumCell::{Constant, Existing, Witness};
-use halo2_proofs::dev::metadata::Constraint;
 use num_bigint::BigUint;
 use bitvec::{order::Lsb0, vec::BitVec};
 

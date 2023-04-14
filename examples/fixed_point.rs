@@ -40,10 +40,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
 
     let exp_1 = fixed_point_chip.qexp2(ctx, x);
     let y_decimal = fixed_point_chip.dequantization(*exp_1.value());
-    let tmp1 = (x_decimal.exp2() * 2f64.powi(PRECISION_BITS as i32)).round() as u128;
-    let tmp2 =  (tmp1 % (2u128.pow(PRECISION_BITS * 2))) as f64;
-    println!("tmp1: {:?}, tmp2: {:?}", tmp1, tmp2);
-    let y_native = tmp2 / 2f64.powi(PRECISION_BITS as i32);
+    let y_native = x_decimal.exp2();
     println!(
         "###### zk-exp({:.6}) = {}, native-exp({:.6}) = {:.6}, error = {:.6} ({:.6}%)",
         x_decimal, y_decimal, x_decimal, y_native,
