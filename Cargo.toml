@@ -14,8 +14,6 @@ halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.gi
 
 # Axiom's helper API with basic functions 
 halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7", default-features = false, features = ["halo2-pse", "halo2-pse"] }
-# Axiom poseidon chip (adapted from Scroll)
-# poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7" }
 
 num-bigint = "0.4"
 snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-verifier", tag = "v2023_02_02"}
