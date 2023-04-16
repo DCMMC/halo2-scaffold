@@ -340,6 +340,7 @@ pub fn prove<T>(
     match var("GEN_AGG_EVM") {
         Ok(gen_agg_evm_file) => {
             let agg_time = start_timer!(|| "Generating EVM agg proof verifier");
+            let agg_params = gen_srs(20u32);
             let mut assigned_ins_vec = Vec::new();
             assigned_ins_vec.push(assigned_instances_copy.into_iter().map(|x| *x.value()).collect());
             let protocol = compile::<_, _>(
@@ -353,12 +354,12 @@ pub fn prove<T>(
             let agg_circuit = AggregationCircuit::new(&params, snarks).unwrap();
             let agg_pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(
                 &agg_circuit,
-                &params,
+                &agg_params,
             ).unwrap();
             
             let agg_vk = agg_pk.get_vk();
             let deployment_code = gen_aggregation_evm_verifier(
-                &params,
+                &agg_params,
                 &agg_vk,
                 agg_circuit.num_instance(),
                 AggregationCircuit::accumulator_indices(),
@@ -371,11 +372,11 @@ pub fn prove<T>(
             let evm_verify_time = start_timer!(|| "Verify proof on-chain");
             let snark_proof = create_proof_circuit_kzg(
                 agg_circuit.clone(),
-                &params,
+                &agg_params,
                 agg_circuit.instances(),
                 &agg_pk,
                 ezkl_lib::commands::TranscriptType::EVM,
-                AccumulatorStrategy::new(&params),
+                AccumulatorStrategy::new(&agg_params),
                 ezkl_lib::circuit::base::CheckMode::SAFE,
             ).unwrap();
             snark_proof.save(&agg_proof_path).unwrap();
