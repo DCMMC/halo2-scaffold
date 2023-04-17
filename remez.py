@@ -388,7 +388,7 @@ def remezFitSegmented(name, func, weightFunc, domain, numSegments, order):
 
 	return (maxError, segments)
 
-epsilon = mp.mpf(f'1e-{dps//3}')
+epsilon = mp.mpf(f'1e-{dps}')
 
 # Implementation of sin() with the assumption that input has been normalized to [-1.0, 1.0] range
 # and squared. Also assumes the output will be multiplied by x once more (to make it odd).
@@ -401,8 +401,8 @@ def sinSqr(x):
 
 FUNCS = [
 	# ('Exp', lambda x: mp.exp(x), lambda x: mp.exp(x), (0.0, 1.0)),
-	('Exp2', lambda x: 2.0**x, lambda x: 2.0**x, (0.0, 1.0)),
-	('Log', lambda x: mp.log(x+1), lambda x: mp.log(x+1) * (mp.log(2.0) - mp.log(x+1)), (epsilon, 0.1716)),
+	# ('Exp2', lambda x: 2.0**x, lambda x: 2.0**x, (0.0, 1.0)),
+	('Log', lambda x: mp.log(x+1), lambda x: mp.log(x+1) * (mp.log(2.0) - mp.log(x+1)), (2**-4, 2**-3)),
 	#('Log2', lambda x: mp.log(x+1, 2.0), lambda x: mp.log(x+1, 2.0) * (1 - mp.log(x+1, 2.0)), (epsilon, 0.1716)),
 	# ('Rcp', lambda x: 1.0 / (x+1), lambda x: 1.0 / (x+1), (0.0, 1.0)),
 	# ('Sqrt', lambda x: mp.sqrt(x+1), lambda x: mp.sqrt(x+1), (0.0, 1.0)),

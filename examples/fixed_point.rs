@@ -17,7 +17,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
     // lookup bits must agree with the size of the lookup table, which is specified by an environmental variable
     let lookup_bits =
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
-    const PRECISION_BITS: u32 = 42;
+    const PRECISION_BITS: u32 = 63;
     // fixed-point exp arithmetic
     let fixed_point_chip = FixedPointChip::<F, PRECISION_BITS>::default(lookup_bits);
 
@@ -31,44 +31,49 @@ fn some_algorithm_in_zk<F: ScalarField>(
     // we can make it public like so:
     make_public.push(x);
 
-    // let overflow = fixed_point_chip.qmul(
-    //     ctx,
-    //     Constant(biguint_to_scalar(BigUint::from(2u32).pow(62))),
-    //     Constant(biguint_to_scalar(BigUint::from(2u32).pow(61)))
-    // );
-    // println!("overflow: {:?}", overflow.value());
-
     let exp_1 = fixed_point_chip.qexp2(ctx, x);
     let y_decimal = fixed_point_chip.dequantization(*exp_1.value());
     let y_native = x_decimal.exp2();
     println!(
-        "###### zk-exp({:.6}) = {}, native-exp({:.6}) = {:.6}, error = {:.6} ({:.6}%)",
+        "###### zk-exp2({:.6}) = {}, native-exp({:.6}) = {:.6}, error = {:.6} ({:.6}%)",
         x_decimal, y_decimal, x_decimal, y_native,
         (y_decimal - y_native).abs(), (y_decimal - y_native).abs() / y_native.abs() * 100.0
     );
 
+    if x_decimal > 0f64 {
+        let log_2 = fixed_point_chip.qlog2(ctx, x);
+        let y_decimal_2 = fixed_point_chip.dequantization(*log_2.value());
+        let y_native_2 = x_decimal.log2();
+        println!(
+            "###### zk-log2({:.6}) = {}, native-log2({:.6}) = {:.6}, error = {:.6} ({:.6}%)",
+            x_decimal, y_decimal_2, x_decimal, y_native_2,
+            (y_decimal_2 - y_native_2).abs(), (y_decimal_2 - y_native_2).abs() / y_native_2.abs() * 100.0
+        );
+    }
+    
     // make_public.push(exp_1);
 }
 
 fn main() {
     env_logger::init();
     // genrally lookup_bits is degree - 1
-    set_var("LOOKUP_BITS", 11.to_string());
+    set_var("LOOKUP_BITS", 12.to_string());
     set_var("DEGREE", 13.to_string());
 
     // run mock prover
     mock(some_algorithm_in_zk, -12.0);
     mock(some_algorithm_in_zk, -1.88724767676867);
     mock(some_algorithm_in_zk, 0.0);
-    mock(some_algorithm_in_zk, 0.1234568);
     mock(some_algorithm_in_zk, 1.0);
-    mock(some_algorithm_in_zk, 15.6);
+    mock(some_algorithm_in_zk, 1.128136);
+    mock(some_algorithm_in_zk, 2.0);
+    mock(some_algorithm_in_zk, 4.0);
 
     // uncomment below to run actual prover:
     // the 3rd parameter is a dummy input to provide for the proving key generation
     prove(
         some_algorithm_in_zk,
-        -1.34,
-        12.45
+        5.289787786,
+        0.52897877867479988
     );
 }
