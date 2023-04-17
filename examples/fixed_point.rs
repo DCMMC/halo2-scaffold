@@ -17,7 +17,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
     // lookup bits must agree with the size of the lookup table, which is specified by an environmental variable
     let lookup_bits =
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
-    const PRECISION_BITS: u32 = 63;
+    const PRECISION_BITS: u32 = 32;
     // fixed-point exp arithmetic
     let fixed_point_chip = FixedPointChip::<F, PRECISION_BITS>::default(lookup_bits);
 
@@ -71,6 +71,7 @@ fn main() {
     set_var("DEGREE", 13.to_string());
 
     // run mock prover
+    mock(some_algorithm_in_zk, -120.0);
     mock(some_algorithm_in_zk, -12.0);
     mock(some_algorithm_in_zk, -1.88724767676867);
     mock(some_algorithm_in_zk, 0.0);
@@ -79,6 +80,7 @@ fn main() {
     mock(some_algorithm_in_zk, 2.0);
     mock(some_algorithm_in_zk, 4.0);
     mock(some_algorithm_in_zk, 2.0 * std::f64::consts::PI);
+    // mock(some_algorithm_in_zk, 120.0);
 
     // uncomment below to run actual prover:
     // the 3rd parameter is a dummy input to provide for the proving key generation

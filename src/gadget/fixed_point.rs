@@ -21,7 +21,7 @@ pub struct FixedPointChip<F: ScalarField, const PRECISION_BITS: u32> {
     strategy: FixedPointStrategy,
     pub gate: RangeChip<F>,
     pub quantization_scale: F,
-    pub max_value: F,
+    pub max_value: BigUint,
     pub bn254_max: F,
     pub negative_point: F,
     pub lookup_bits: usize,
@@ -46,7 +46,7 @@ pub fn biguint_to_scalar<F: ScalarField>(x: BigUint) -> F {
 impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS> {
     pub fn new(strategy: FixedPointStrategy, lookup_bits: usize) -> Self {
         assert!(PRECISION_BITS <= 63, "support only precision bits <= 63");
-        assert!(PRECISION_BITS >= 8, "support only precision bits >= 8");
+        assert!(PRECISION_BITS >= 32, "support only precision bits >= 32");
         let gate = RangeChip::new(
             match strategy {
                 FixedPointStrategy::Vertical => RangeStrategy::Vertical,
@@ -65,7 +65,7 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS
         // -max_value % m = negative_point
         let negative_point = bn254_max - u128_to_scalar::<F>(2u128.pow(PRECISION_BITS * 2 + 1)) + F::one();
         // min_value < x < max_value
-        let max_value = u128_to_scalar(2u128.pow(PRECISION_BITS*2));
+        let max_value = BigUint::from(2u32).pow(PRECISION_BITS * 2);
 
         Self { strategy, gate, quantization_scale, max_value, bn254_max, negative_point, lookup_bits }
     }
@@ -418,9 +418,8 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         let a = a.into();
         let sign = self.is_neg(ctx, a);
         let a_abs = self.qabs(ctx, a);
-        // assume a < 2^{2p}
-        let a_num_bits = PRECISION_BITS as usize * 4;
-        let m = BigUint::from(2u32).pow(PRECISION_BITS * 2);
+        let a_num_bits = 254;
+        let m = self.max_value.clone();
         // clipped = a % m
         // TODO (Wentao XIAO) should we just throw panic when overflow?
         let (_, unsigned_cliped) = self.range_gate().div_mod(ctx, a_abs, m, a_num_bits);
@@ -448,10 +447,12 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         let a_abs = self.qabs(ctx, a);
         let b_abs = self.qabs(ctx, b);
         let ab_abs = self.gate().mul(ctx, a_abs, b_abs);
+        // we simulate overflow here
+        let (_, ab_abs_mod) = self.range_gate().div_mod(
+            ctx, ab_abs, BigUint::from(2u32).pow(num_bits as u32), 254);
         let ab_sign = self.bit_xor(ctx, a_sign, b_sign);
-        self.range_gate().range_check(ctx, ab_abs, num_bits);
         let (ab_rescale, _) = self.range_gate().div_mod(
-            ctx, ab_abs, self.quantization_scale.get_lower_128(), num_bits
+            ctx, ab_abs_mod, self.quantization_scale.get_lower_128(), num_bits
         );
         let res = self.cond_neg(ctx, ab_rescale, ab_sign);
 
