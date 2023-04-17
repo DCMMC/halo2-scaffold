@@ -39,6 +39,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
         x_decimal, y_decimal, x_decimal, y_native,
         (y_decimal - y_native).abs(), (y_decimal - y_native).abs() / y_native.abs() * 100.0
     );
+    make_public.push(exp_1);
 
     if x_decimal > 0f64 {
         let log_2 = fixed_point_chip.qlog2(ctx, x);
@@ -49,9 +50,18 @@ fn some_algorithm_in_zk<F: ScalarField>(
             x_decimal, y_decimal_2, x_decimal, y_native_2,
             (y_decimal_2 - y_native_2).abs(), (y_decimal_2 - y_native_2).abs() / y_native_2.abs() * 100.0
         );
+        make_public.push(log_2);
     }
-    
-    // make_public.push(exp_1);
+
+    let sin_x = fixed_point_chip.qsin(ctx, x);
+    let y_decimal_3 = fixed_point_chip.dequantization(*sin_x.value());
+    let y_native_3 = x_decimal.sin();
+    println!(
+        "###### zk-sin({:.6}) = {}, native-sin({:.6}) = {:.6}, error = {:.6} ({:.6}%)",
+        x_decimal, y_decimal_3, x_decimal, y_native_3,
+        (y_decimal_3 - y_native_3).abs(), (y_decimal_3 - y_native_3).abs() / y_native_3.abs() * 100.0
+    );
+    make_public.push(sin_x);
 }
 
 fn main() {
@@ -68,6 +78,7 @@ fn main() {
     mock(some_algorithm_in_zk, 1.128136);
     mock(some_algorithm_in_zk, 2.0);
     mock(some_algorithm_in_zk, 4.0);
+    mock(some_algorithm_in_zk, 2.0 * std::f64::consts::PI);
 
     // uncomment below to run actual prover:
     // the 3rd parameter is a dummy input to provide for the proving key generation
