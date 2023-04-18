@@ -17,6 +17,10 @@ halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", branch = "axio
 # Axiom poseidon chip (adapted from Scroll)
 poseidon = { git = "https://github.com/axiom-crypto/halo2-lib", branch = "axiom-dev-0406" }
 
+linfa = "0.6"
+linfa-datasets = { version = "0.6", features = ["diabetes"] }
+linfa-linear = "0.6"
+ndarray = { version = "0.15", features = ["approx"] }
 num-bigint = "0.4"
 bitvec = "1"
 

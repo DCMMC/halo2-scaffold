@@ -270,6 +270,15 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     ) -> AssignedValue<F>
     where 
         F: BigPrimeField;
+    
+    fn inner_product<QA>(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl IntoIterator<Item = QA>,
+        b: impl IntoIterator<Item = QA>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField, QA: Into<QuantumCell<F>> + Copy;
 
     fn qmod(
         &self,
@@ -447,12 +456,9 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         let a_abs = self.qabs(ctx, a);
         let b_abs = self.qabs(ctx, b);
         let ab_abs = self.gate().mul(ctx, a_abs, b_abs);
-        // we simulate overflow here
-        let (_, ab_abs_mod) = self.range_gate().div_mod(
-            ctx, ab_abs, BigUint::from(2u32).pow(num_bits as u32), 254);
         let ab_sign = self.bit_xor(ctx, a_sign, b_sign);
         let (ab_rescale, _) = self.range_gate().div_mod(
-            ctx, ab_abs_mod, self.quantization_scale.get_lower_128(), num_bits
+            ctx, ab_abs, self.quantization_scale.get_lower_128(), num_bits
         );
         let res = self.cond_neg(ctx, ab_rescale, ab_sign);
 
@@ -710,5 +716,26 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         let sin_a = self.cond_neg(ctx, sin_a_abs, a_sign);
 
         sin_a
+    }
+
+    fn inner_product<QA>(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl IntoIterator<Item = QA>,
+        b: impl IntoIterator<Item = QA>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField, QA: Into<QuantumCell<F>> + Copy
+    {
+        let a: Vec<QA> = a.into_iter().collect();
+        let b: Vec<QA> = b.into_iter().collect();
+        assert!(a.len() == b.len());
+        let mut res = self.qadd(ctx, Constant(F::zero()), Constant(F::zero()));
+        for (ai, bi) in a.iter().zip(b.iter()).into_iter() {
+            let ai_bi = self.qmul(ctx, *ai, *bi);
+            res = self.qadd(ctx, res, ai_bi);
+        }
+
+        res
     }
 }

@@ -71,7 +71,6 @@ fn main() {
     set_var("DEGREE", 13.to_string());
 
     // run mock prover
-    mock(some_algorithm_in_zk, -120.0);
     mock(some_algorithm_in_zk, -12.0);
     mock(some_algorithm_in_zk, -1.88724767676867);
     mock(some_algorithm_in_zk, 0.0);
@@ -80,7 +79,6 @@ fn main() {
     mock(some_algorithm_in_zk, 2.0);
     mock(some_algorithm_in_zk, 4.0);
     mock(some_algorithm_in_zk, 2.0 * std::f64::consts::PI);
-    // mock(some_algorithm_in_zk, 120.0);
 
     // uncomment below to run actual prover:
     // the 3rd parameter is a dummy input to provide for the proving key generation
