@@ -339,15 +339,7 @@ pub fn prove<T>(
 
     let mut assigned_ins_vec = Vec::new();
     assigned_ins_vec.push(assigned_instances_copy.into_iter().map(|x| *x.value()).collect());
-    let protocol = compile::<_, _>(
-        &params,
-        pk.get_vk(),
-        Config::kzg().with_num_instance(num_instance),
-    );
-    let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
-    let ins = checkable_pf.instances;
-    let pf = checkable_pf.proof;
-    let proof_bytes = encode_calldata(&ins, &pf);
+    let proof_bytes = encode_calldata(&assigned_ins_vec, &proof);
     println!("Congratulations! Your ZK proof is valid!");
     end_timer!(pf_time);
     return proof_bytes;
