@@ -58,15 +58,11 @@ fn main() {
     set_var("LOOKUP_BITS", 8.to_string());
     // Must has at least 20 degree to generate the aggregated proof with the recursived ZK
     set_var("DEGREE", 9.to_string());
-    set_var("GEN_AGG_EVM", "params/zk_range_agg_evm.code");
-
-    // run mock prover
-    mock(some_algorithm_in_zk, [Fr::from(101), Fr::from(100), Fr::from(200)]);
-    mock(some_algorithm_in_zk, [Fr::from(201), Fr::from(100), Fr::from(200)]);
 
     // uncomment below to run actual prover:
-    prove(
+    let res = prove(
         some_algorithm_in_zk, 
         [Fr::from(101), Fr::from(100), Fr::from(200)], 
         [Fr::from(99), Fr::from(100), Fr::from(200)]);
+    println!("proof (size={}bytes): {:?}", res.len(), res);
 }

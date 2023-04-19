@@ -228,7 +228,7 @@ pub fn prove<T>(
     f: impl Fn(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
     private_inputs: T,
     dummy_inputs: T,
-) {
+) -> Vec<u8> {
     let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
     // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
     let lookup_bits: Option<usize> = var("LOOKUP_BITS")
@@ -336,73 +336,35 @@ pub fn prove<T>(
         .expect("proof generation failed");
         transcript.finalize()
     };
-    end_timer!(pf_time);
-    match var("GEN_AGG_EVM") {
-        Ok(gen_agg_evm_file) => {
-            let agg_time = start_timer!(|| "Generating EVM agg proof verifier");
-            let agg_params = gen_srs(20u32);
-            let mut assigned_ins_vec = Vec::new();
-            assigned_ins_vec.push(assigned_instances_copy.into_iter().map(|x| *x.value()).collect());
-            let protocol = compile::<_, _>(
-                &params,
-                pk.get_vk(),
-                Config::kzg().with_num_instance(num_instance),
-            );
-            let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
-            let mut snarks = Vec::new();
-            snarks.push(checkable_pf);
-            let agg_circuit = AggregationCircuit::new(&params, snarks).unwrap();
-            let agg_pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(
-                &agg_circuit,
-                &agg_params,
-            ).unwrap();
-            
-            let agg_vk = agg_pk.get_vk();
-            let deployment_code = gen_aggregation_evm_verifier(
-                &agg_params,
-                &agg_vk,
-                agg_circuit.num_instance(),
-                AggregationCircuit::accumulator_indices(),
-            ).unwrap();
-            let deployment_code_path = PathBuf::from(gen_agg_evm_file.clone());
-            deployment_code.save(&deployment_code_path).unwrap();
-            let agg_proof_path = PathBuf::from(gen_agg_evm_file + ".pf");
-            end_timer!(agg_time);
 
-            let evm_verify_time = start_timer!(|| "Verify proof on-chain");
-            let snark_proof = create_proof_circuit_kzg(
-                agg_circuit.clone(),
-                &agg_params,
-                agg_circuit.instances(),
-                &agg_pk,
-                ezkl_lib::commands::TranscriptType::EVM,
-                AccumulatorStrategy::new(&agg_params),
-                ezkl_lib::circuit::base::CheckMode::SAFE,
-            ).unwrap();
-            snark_proof.save(&agg_proof_path).unwrap();
-            let code = DeploymentCode::load(&deployment_code_path).unwrap();
-            evm_verify(code, snark_proof.clone()).unwrap();
-            end_timer!(evm_verify_time);
-        },
-        _ => ()
-    }
-
-    // let strategy = SingleStrategy::new(&params);
-    let strategy = AccumulatorStrategy::new(&params);
-    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
-    let verify_time = start_timer!(|| "verify");
-    verify_proof::<
-        KZGCommitmentScheme<Bn256>,
-        VerifierSHPLONK<'_, Bn256>,
-        Challenge255<G1Affine>,
-        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
-        // SingleStrategy<'_, Bn256>,
-        AccumulatorStrategy<'_, Bn256>,
-    >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
-    .unwrap();
-    end_timer!(verify_time);
-
+    let mut assigned_ins_vec = Vec::new();
+    assigned_ins_vec.push(assigned_instances_copy.into_iter().map(|x| *x.value()).collect());
+    let protocol = compile::<_, _>(
+        &params,
+        pk.get_vk(),
+        Config::kzg().with_num_instance(num_instance),
+    );
+    let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
+    let ins = checkable_pf.instances;
+    let pf = checkable_pf.proof;
+    let proof_bytes = encode_calldata(&ins, &pf);
     println!("Congratulations! Your ZK proof is valid!");
+    end_timer!(pf_time);
+    return proof_bytes;
+    // let strategy = SingleStrategy::new(&params);
+    // let strategy = AccumulatorStrategy::new(&params);
+    // let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+    // let verify_time = start_timer!(|| "verify");
+    // verify_proof::<
+    //     KZGCommitmentScheme<Bn256>,
+    //     VerifierSHPLONK<'_, Bn256>,
+    //     Challenge255<G1Affine>,
+    //     Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+    //     // SingleStrategy<'_, Bn256>,
+    //     AccumulatorStrategy<'_, Bn256>,
+    // >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
+    // .unwrap();
+    // end_timer!(verify_time);
 }
 
 #[derive(Clone, Debug)]
