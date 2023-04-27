@@ -71,7 +71,7 @@ pub fn train<F: ScalarField>(
         make_public.push(wi);
     }
     make_public.push(b);
-    let param = make_public.iter().map(|x| chip.chip.dequantization(*x.value()));
+    let param: Vec<f64> = make_public.iter().map(|x| chip.chip.dequantization(*x.value())).collect();
     println!("params: {:?}", param);
 }
 
