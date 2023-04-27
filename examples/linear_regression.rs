@@ -12,6 +12,41 @@ use linfa::prelude::*;
 use linfa_linear::LinearRegression;
 use ndarray::{Array, Axis};
 
+pub fn train_native(
+    train_x: Vec<Vec<f64>>, train_y: Vec<f64>, lr: f64, epoch: i32, batch_size: usize
+) {
+    let dim = train_x[0].len();
+    let mut w = vec![0.; dim];
+    let mut b = 0.;
+    let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
+    for idx_epoch in 0..epoch {
+        println!("Epoch {:?}", idx_epoch + 1);
+        for idx_batch in 0..n_batch {
+            let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
+            let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
+            let n_sample = batch_x.len();
+            let batch_lr = lr / n_sample as f64;
+
+            let y_pred: Vec<f64> = batch_x.iter().map(|xi| {
+                let mut yi = b;
+                for j in 0..xi.len() {
+                    yi += xi[j] * w[j];
+                }
+
+                yi
+            }).collect();
+            let diff_y: Vec<f64> = y_pred.iter().zip(batch_y).map(|(yi, ti)| yi - ti).collect();
+            let loss: f64 = diff_y.iter().map(|x| x * x).sum::<f64>() / n_sample as f64 / 2.0;
+            println!("loss: {:?}", loss);
+            b = b - batch_lr * diff_y.iter().sum::<f64>();
+            for j in 0..w.len() {
+                w[j] = w[j] - batch_lr * diff_y.iter().zip(batch_x.iter()).map(|(diff_yi, batch_xi)| diff_yi * batch_xi[j]).sum::<f64>();
+            }
+            println!("w: {:?}, b: {:?}", w, b);
+        }
+    }
+}
+
 pub fn train<F: ScalarField>(
     ctx: &mut Context<F>,
     input: (Vec<F>, F, Vec<Vec<f64>>, Vec<f64>, f64),
@@ -36,6 +71,8 @@ pub fn train<F: ScalarField>(
         make_public.push(wi);
     }
     make_public.push(b);
+    let param = make_public.iter().map(|x| chip.chip.dequantization(*x.value()));
+    println!("params: {:?}", param);
 }
 
 pub fn inference<F: ScalarField>(
@@ -132,14 +169,17 @@ fn main() {
     let epoch = 40;
     let learning_rate = 0.01;
     let batch_size: usize = 32;
+    
+    train_native(train_x.clone(), train_y.clone(), learning_rate, epoch, batch_size);
+
     let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
     let mut out = vec![];
-    let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
+    // let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
     for idx_epoch in 0..epoch {
         debug!("Epoch {:?}", idx_epoch + 1);
         for idx_batch in 0..n_batch {
-            let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), idx_batch as usize + 1) * batch_size]).to_vec();
-            let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), idx_batch as usize + 1) * batch_size]).to_vec();
+            let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
+            let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
             let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
             // out = prove(train, private_inputs, dummy_inputs.clone());
             out = mock(train, private_inputs);
