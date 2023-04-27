@@ -88,7 +88,7 @@ pub fn gen_aggregation_evm_verifier(
         vk,
         Config::kzg()
             .with_num_instance(num_instance.clone())
-            .with_accumulator_indices(Some(accumulator_indices)),
+            .with_accumulator_indices(if accumulator_indices.len() > 0 { Some(accumulator_indices) } else { None }),
     );
     let vk: KzgDecidingKey<Bn256> = (params.get_g()[0], params.g2(), params.s_g2()).into();
 
