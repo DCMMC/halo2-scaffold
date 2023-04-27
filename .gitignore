@@ -19,3 +19,4 @@ params/kzg_bn254_18.srs
 fitted.txt
 *.ipynb
 log.txt
+log-zk.txt
