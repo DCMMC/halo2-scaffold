@@ -5,7 +5,7 @@ use halo2_base::Context;
 use halo2_scaffold::gadget::linear_regression::LinearRegressionChip;
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
-use log::debug;
+use log::warn;
 use std::cmp::min;
 use std::env::{var, set_var};
 use linfa::prelude::*;
@@ -123,7 +123,7 @@ pub fn inference<F: ScalarField>(
 }
 
 fn main() {
-    set_var("RUST_LOG", "trace");
+    set_var("RUST_LOG", "warn");
     env_logger::init();
     // genrally lookup_bits is degree - 1
     set_var("LOOKUP_BITS", 12.to_string());
@@ -176,7 +176,7 @@ fn main() {
     let mut out = vec![];
     // let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
     for idx_epoch in 0..epoch {
-        debug!("Epoch {:?}", idx_epoch + 1);
+        warn!("Epoch {:?}", idx_epoch + 1);
         for idx_batch in 0..n_batch {
             let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
             let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();

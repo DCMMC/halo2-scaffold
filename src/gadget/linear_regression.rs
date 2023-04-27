@@ -2,7 +2,7 @@ use halo2_base::{
     utils::{ScalarField, BigPrimeField},
     QuantumCell, Context, AssignedValue
 };
-use log::debug;
+use log::warn;
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use std::convert::From;
 
@@ -77,7 +77,7 @@ impl<F: ScalarField> LinearRegressionChip<F> {
         }
         // loss = 0.5 * MSE(y, t)
         loss /= n_sample * 2.0;
-        debug!("loss: {:?}", loss);
+        warn!("loss: {:?}", loss);
 
         for j in 0..w.len() {
             let mut partial_wj = vec![];
