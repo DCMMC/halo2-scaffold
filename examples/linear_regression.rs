@@ -166,10 +166,10 @@ fn main() {
     let dim = train_x[0].len();
     let mut w = vec![Fr::from(0); dim];
     let mut b = Fr::from(0);
-    let epoch = 40;
+    let epoch = 20;
     let learning_rate = 0.01;
     let batch_size: usize = 32;
-    
+
     train_native(train_x.clone(), train_y.clone(), learning_rate, epoch, batch_size);
 
     let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;

@@ -323,8 +323,124 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     where 
         F: BigPrimeField;
 
+    fn qcos(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
     fn check_power_of_two(&self, ctx: &mut Context<F>, pow2_exponent: AssignedValue<F>, exponent: AssignedValue<F>)
     where
+        F: BigPrimeField;
+
+    fn qtan(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let sin_a = self.qsin(ctx, a);
+        let cos_a = self.qcos(ctx, a);
+        let y = self.qdiv(ctx, sin_a, cos_a);
+
+        y
+    }
+
+    fn qexp(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+
+    fn qsinh(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+    
+    fn qcosh(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+    
+    fn qtanh(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let sinh = self.qsinh(ctx, a);
+        let cosh = self.qcosh(ctx, a);
+        let y = self.qdiv(ctx, sinh, cosh);
+
+        y
+    }
+
+    fn qmax(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    fn qmin(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    fn qlog(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField;
+
+    fn qpow(
+        &self,
+        ctx: &mut Context<F>,
+        x: impl Into<QuantumCell<F>>,
+        exponent: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        // x^a = exp(a * log(x))
+        let logx = self.qlog(ctx, x);
+        let alogx = self.qmul(ctx, exponent, logx);
+        let y = self.qexp(ctx, alogx);
+
+        y
+    }
+
+    fn qsqrt(
+        &self,
+        ctx: &mut Context<F>,
+        x: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
         F: BigPrimeField;
 }
 
@@ -725,6 +841,21 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         sin_a
     }
 
+    fn qcos(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let half_pi = ctx.load_constant(self.quantization(std::f64::consts::FRAC_PI_2));
+        let a_plus_half_pi = self.qadd(ctx, a, half_pi);
+        let y = self.qsin(ctx, a_plus_half_pi);
+
+        y
+    }
+
     fn inner_product<QA>(
         &self,
         ctx: &mut Context<F>,
@@ -744,5 +875,123 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         }
 
         res
+    }
+
+    fn qexp(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        // e^x == 2^(x / ln(2))
+        let ln2 = ctx.load_constant(self.quantization(2.0f64.ln()));
+        let x1 = self.qdiv(ctx, a, ln2);
+        let y = self.qexp2(ctx, x1);
+
+        y
+    }
+
+    fn qsinh(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let ea = self.qexp(ctx, a);
+        let na = self.neg(ctx, a);
+        let ena = self.qexp(ctx, na);
+        let nume = self.qsub(ctx, ea, ena);
+        let two = ctx.load_constant(self.quantization(2.0));
+        let y = self.qdiv(ctx, nume, two);
+
+        y
+    }
+
+    fn qcosh(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let ea = self.qexp(ctx, a);
+        let na = self.neg(ctx, a);
+        let ena = self.qexp(ctx, na);
+        let nume = self.qadd(ctx, ea, ena);
+        let two = ctx.load_constant(self.quantization(2.0));
+        let y = self.qdiv(ctx, nume, two);
+
+        y
+    }
+
+    fn qmax(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let b = b.into();
+        let amb = self.qsub(ctx, a, b);
+        let sign_amb = self.is_neg(ctx, amb);
+        let y = self.gate().select(ctx, b, a, sign_amb);
+
+        y
+    }
+
+    fn qmin(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>,
+        b: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let a = a.into();
+        let b = b.into();
+        let amb = self.qsub(ctx, a, b);
+        let sign_amb = self.is_neg(ctx, amb);
+        let y = self.gate().select(ctx, a, b, sign_amb);
+
+        y
+    }
+
+    fn qlog(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        // log(x) = log2(x) / log2(e)
+        let log2e = ctx.load_constant(self.quantization(std::f64::consts::LOG2_E));
+        let log2a = self.qlog2(ctx, a);
+        let y = self.qdiv(ctx, log2a, log2e);
+
+        y
+    }
+
+    fn qsqrt(
+        &self,
+        ctx: &mut Context<F>,
+        x: impl Into<QuantumCell<F>>
+    ) -> AssignedValue<F>
+    where 
+        F: BigPrimeField
+    {
+        let half = ctx.load_constant(self.quantization(0.5));
+        self.qpow(ctx, x, half)
     }
 }
