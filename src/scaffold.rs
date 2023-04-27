@@ -39,7 +39,7 @@ use std::env::var;
 pub fn mock<T>(
     f: impl FnOnce(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
     private_inputs: T,
-) {
+) -> Vec<Fr> {
     let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
     // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
     let lookup_bits: Option<usize> = var("LOOKUP_BITS")
@@ -75,7 +75,7 @@ pub fn mock<T>(
         };
 
         // we don't have any public inputs for now
-        MockProver::run(k as u32, &circuit, vec![public_io]).unwrap().assert_satisfied();
+        MockProver::run(k as u32, &circuit, vec![public_io.clone()]).unwrap().assert_satisfied();
     } else {
         // create circuit
         let circuit = GateWithInstanceCircuitBuilder {
@@ -84,10 +84,12 @@ pub fn mock<T>(
         };
 
         // we don't have any public inputs for now
-        MockProver::run(k as u32, &circuit, vec![public_io]).unwrap().assert_satisfied();
+        MockProver::run(k as u32, &circuit, vec![public_io.clone()]).unwrap().assert_satisfied();
     }
     end_timer!(time);
     println!("Mock prover passed!");
+
+    public_io
 }
 
 /// Creates a circuit and runs the full Halo2 proving process on it.
@@ -102,7 +104,7 @@ pub fn prove<T>(
     f: impl Fn(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
     private_inputs: T,
     dummy_inputs: T,
-) {
+) -> Vec<Fr> {
     let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
     // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
     let lookup_bits: Option<usize> = var("LOOKUP_BITS")
@@ -217,6 +219,8 @@ pub fn prove<T>(
     end_timer!(verify_time);
 
     println!("Congratulations! Your ZK proof is valid!");
+    
+    public_io
 }
 
 #[derive(Clone, Debug)]

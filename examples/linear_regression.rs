@@ -1,15 +1,43 @@
+use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::AssignedValue;
 use halo2_base::Context;
 use halo2_scaffold::gadget::linear_regression::LinearRegressionChip;
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
+use log::debug;
 use std::env::{var, set_var};
 use linfa::prelude::*;
 use linfa_linear::LinearRegression;
 use ndarray::{Array, Axis};
 
-fn some_algorithm_in_zk<F: ScalarField>(
+pub fn train<F: ScalarField>(
+    ctx: &mut Context<F>,
+    input: (Vec<F>, F, Vec<Vec<f64>>, Vec<f64>, f64),
+    make_public: &mut Vec<AssignedValue<F>>,
+) where F: BigPrimeField {
+    let lookup_bits =
+        var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
+    let chip = LinearRegressionChip::<F>::new(lookup_bits);
+
+    let (w, b, train_x, train_y, learning_rate) = input;
+    let mut w = w.iter().map(
+        |wi| ctx.load_witness(*wi)).collect();
+    let mut b = ctx.load_witness(b);
+    let mut train_x_witness: Vec<Vec<AssignedValue<F>>> = vec![];
+    for xi in train_x {
+        train_x_witness.push(xi.iter().map(|xij| ctx.load_witness(chip.chip.quantization(*xij))).collect::<Vec<AssignedValue<F>>>());
+    }
+    let train_y: Vec<AssignedValue<F>> = train_y.iter().map(|yi| ctx.load_witness(chip.chip.quantization(*yi))).collect();
+
+    (w, b) = chip.train_one_batch(ctx, w, b, train_x_witness, train_y, learning_rate);
+    for wi in w {
+        make_public.push(wi);
+    }
+    make_public.push(b);
+}
+
+pub fn inference<F: ScalarField>(
     ctx: &mut Context<F>,
     x: Vec<f64>,
     make_public: &mut Vec<AssignedValue<F>>,
@@ -38,16 +66,6 @@ fn some_algorithm_in_zk<F: ScalarField>(
     println!("intercept:  {}", model.intercept());
     println!("parameters: {}", model.params());
 
-    // let (sample_x, sample_y) = dataset.sample_iter().next().unwrap();
-    // println!("sample_x: {:?}, sample_y: {:?}", sample_x, sample_y);
-    let mut train_x: Vec<Vec<AssignedValue<F>>> = vec![];
-    let mut train_y: Vec<AssignedValue<F>> = vec![];
-    for (sample_x, sample_y) in dataset.sample_iter() {
-        train_x.push(sample_x.iter().map(|xi| ctx.load_witness(chip.chip.quantization(*xi))).collect::<Vec<AssignedValue<F>>>());
-        train_y.push(ctx.load_witness(chip.chip.quantization(*sample_y.iter().peekable().next().unwrap())));
-    }
-    let (w, b) = chip.train(ctx, train_x, train_y);
-
     let sample_x = Array::from_vec(x);
     let ypred = model.predict(sample_x.insert_axis(Axis(0))).targets()[0];
 
@@ -74,26 +92,62 @@ fn main() {
     set_var("DEGREE", 13.to_string());
 
     // run mock prover
-    let x = vec![
-        -0.00188201652779104, -0.044641636506989, -0.0514740612388061, -0.0263278347173518,
-        -0.00844872411121698, -0.019163339748222, 0.0744115640787594, -0.0394933828740919,
-        -0.0683297436244215, -0.09220404962683];
-    mock(
-        some_algorithm_in_zk,
-        x
-    );
+    // let x0 = vec![
+    //     -0.00188201652779104, -0.044641636506989, -0.0514740612388061, -0.0263278347173518,
+    //     -0.00844872411121698, -0.019163339748222, 0.0744115640787594, -0.0394933828740919,
+    //     -0.0683297436244215, -0.09220404962683];
+    // let x1 = vec![
+    //     -0.123134, -0.129089, -0.0514740612388061, -0.21,
+    //     -0.4353, -0.019163339748222, 0.4242, -0.44,
+    //     -0.2341, -0.231];
+    // mock(
+    //     inference,
+    //     x0.clone()
+    // );
 
     // uncomment below to run actual prover:
     // the 3rd parameter is a dummy input to provide for the proving key generation
-    prove(
-        some_algorithm_in_zk,
-        vec![
-        10.1, -0.044641636506989, -0.0514740612388061, -0.0263278347173518,
-        -0.00844872411121698, -0.019163339748222, 0.0744115640787594, -0.0394933828740919,
-        -0.0683297436244215, -0.09220404962683],
-        vec![
-        -0.00188201652779104, -0.129089, -0.0514740612388061, -0.0263278347173518,
-        -0.00844872411121698, -0.019163339748222, 0.0744115640787594, -0.0394933828740919,
-        -0.0683297436244215, -0.09220404962683]
-    );
+    // prove(
+    //     inference,
+    //     x0.clone(),
+    //     x1.clone()
+    // );
+
+    let dataset = linfa_datasets::diabetes();
+    let lin_reg = LinearRegression::new();
+    let model = lin_reg.fit(&dataset).unwrap();
+    println!("intercept:  {}", model.intercept());
+    println!("parameters: {}", model.params());
+
+    let mut train_x: Vec<Vec<f64>> = vec![];
+    let mut train_y: Vec<f64> = vec![];
+    for (sample_x, sample_y) in dataset.sample_iter() {
+        train_x.push(sample_x.iter().map(|xi| *xi).collect::<Vec<f64>>());
+        train_y.push(*sample_y.iter().peekable().next().unwrap());
+    }
+    let dim = train_x[0].len();
+    let mut w = vec![Fr::from(0); dim];
+    let mut b = Fr::from(0);
+    let epoch = 40;
+    let learning_rate = 0.01;
+    let batch_size: usize = 32;
+    let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
+    let mut out = vec![];
+    let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
+    for idx_epoch in 0..epoch {
+        debug!("Epoch {:?}", idx_epoch + 1);
+        for idx_batch in 0..n_batch {
+            let batch_x = (&train_x[idx_batch as usize * batch_size..(idx_batch as usize + 1) * batch_size]).to_vec();
+            let batch_y = (&train_y[idx_batch as usize * batch_size..(idx_batch as usize + 1) * batch_size]).to_vec();
+            let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
+            // out = prove(train, private_inputs, dummy_inputs.clone());
+            out = mock(train, private_inputs);
+            w = (&out[..dim]).iter().map(|wi| (*wi).clone()).collect();
+            b = out[dim];
+        }
+    }
+    println!("w: {:?}, b: {:?}", w, b);
+
+    // mock(train, (w, b, train_x, train_y));
+    // prove(train, x0.clone(), x1.clone());
 }
