@@ -224,6 +224,13 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
         xor
     }
 
+    fn qsum<Q>(&self, ctx: &mut Context<F>, a: impl IntoIterator<Item = Q>) -> AssignedValue<F>
+    where
+        Q: Into<QuantumCell<F>>,
+    {
+        self.gate().sum(ctx, a)
+    }
+
     fn neg(
         &self,
         ctx: &mut Context<F>,

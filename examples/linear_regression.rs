@@ -38,8 +38,16 @@ fn some_algorithm_in_zk<F: ScalarField>(
     println!("intercept:  {}", model.intercept());
     println!("parameters: {}", model.params());
 
-    // let (sample_x, _) = dataset.sample_iter().next().unwrap();
-    // println!("sample_x: {:?}", sample_x);
+    // let (sample_x, sample_y) = dataset.sample_iter().next().unwrap();
+    // println!("sample_x: {:?}, sample_y: {:?}", sample_x, sample_y);
+    let mut train_x: Vec<Vec<AssignedValue<F>>> = vec![];
+    let mut train_y: Vec<AssignedValue<F>> = vec![];
+    for (sample_x, sample_y) in dataset.sample_iter() {
+        train_x.push(sample_x.iter().map(|xi| ctx.load_witness(chip.chip.quantization(*xi))).collect::<Vec<AssignedValue<F>>>());
+        train_y.push(ctx.load_witness(chip.chip.quantization(*sample_y.iter().peekable().next().unwrap())));
+    }
+    let (w, b) = chip.train(ctx, train_x, train_y);
+
     let sample_x = Array::from_vec(x);
     let ypred = model.predict(sample_x.insert_axis(Axis(0))).targets()[0];
 
@@ -59,6 +67,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
 }
 
 fn main() {
+    set_var("RUST_LOG", "trace");
     env_logger::init();
     // genrally lookup_bits is degree - 1
     set_var("LOOKUP_BITS", 12.to_string());
