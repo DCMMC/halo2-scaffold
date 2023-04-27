@@ -14,7 +14,7 @@ use halo2_base::{
         halo2curves::bn256::{Bn256, Fr, G1Affine},
         plonk::{
             create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, Column, ConstraintSystem,
-            Error, Instance,
+            Error, Instance, ProvingKey,
         },
         poly::kzg::{
             commitment::KZGCommitmentScheme,
@@ -89,6 +89,149 @@ pub fn mock<T>(
     end_timer!(time);
     println!("Mock prover passed!");
 
+    public_io
+}
+
+pub fn gen_key<T>(
+    f: impl Fn(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
+    dummy_inputs: T,
+) -> (ProvingKey<G1Affine>, Vec<Vec<usize>>) {
+    let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
+    // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
+    let lookup_bits: Option<usize> = var("LOOKUP_BITS")
+        .map(|str| {
+            let lookup_bits = str.parse().unwrap();
+            // we use a lookup table with 2^LOOKUP_BITS rows. Due to blinding factors, we need a little more than 2^LOOKUP_BITS rows total in our circuit
+            assert!(lookup_bits < k, "LOOKUP_BITS needs to be less than DEGREE");
+            lookup_bits
+        })
+        .ok();
+    let minimum_rows = var("MINIMUM_ROWS").unwrap_or_else(|_| "9".to_string()).parse().unwrap();
+    // much the same process as [`mock()`], but we need to create a separate circuit for the key generation stage and the proving stage (in production they are done separately)
+
+    // in keygen mode, the private variables are all not used
+    let mut builder = GateThreadBuilder::keygen();
+    let mut assigned_instances = vec![];
+    f(builder.main(0), dummy_inputs, &mut assigned_instances); // the input value doesn't matter here for keygen
+    builder.config(k, Some(minimum_rows));
+
+    // generates a random universal trusted setup and write to file for later re-use. This is NOT for production. In production a trusted setup must be created from a multi-party computation
+    let params = gen_srs(k as u32);
+    let vk;
+    let pk;
+    let break_points;
+
+    // rust types does not allow dynamic dispatch of different circuit types, so here we are
+    if lookup_bits.is_some() {
+        let circuit = RangeWithInstanceCircuitBuilder {
+            circuit: RangeCircuitBuilder::keygen(builder),
+            assigned_instances,
+        };
+
+        let vk_time = start_timer!(|| "Generating verifying key");
+        vk = keygen_vk(&params, &circuit).expect("vk generation failed");
+        end_timer!(vk_time);
+        let pk_time = start_timer!(|| "Generating proving key");
+        pk = keygen_pk(&params, vk, &circuit).expect("pk generation failed");
+        end_timer!(pk_time);
+        // The MAIN DIFFERENCE in this setup is that after pk generation, the shape of the circuit is set in stone. We should not auto-configure the circuit anymore. Instead, we get the circuit shape and store it:
+        break_points = circuit.circuit.0.break_points.take();
+    } else {
+        let circuit = GateWithInstanceCircuitBuilder {
+            circuit: GateCircuitBuilder::keygen(builder),
+            assigned_instances,
+        };
+
+        let vk_time = start_timer!(|| "Generating verifying key");
+        vk = keygen_vk(&params, &circuit).expect("vk generation failed");
+        end_timer!(vk_time);
+        let pk_time = start_timer!(|| "Generating proving key");
+        pk = keygen_pk(&params, vk, &circuit).expect("pk generation failed");
+        end_timer!(pk_time);
+        // The MAIN DIFFERENCE in this setup is that after pk generation, the shape of the circuit is set in stone. We should not auto-configure the circuit anymore. Instead, we get the circuit shape and store it:
+        break_points = circuit.circuit.break_points.take();
+    }
+
+    (pk, break_points)
+}
+
+pub fn prove_private<T>(
+    f: impl Fn(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
+    private_inputs: T,
+    pk: &ProvingKey<G1Affine>,
+    break_points: Vec<Vec<usize>>
+) -> Vec<Fr> {
+    let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
+    // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
+    let lookup_bits: Option<usize> = var("LOOKUP_BITS")
+        .map(|str| {
+            let lookup_bits = str.parse().unwrap();
+            // we use a lookup table with 2^LOOKUP_BITS rows. Due to blinding factors, we need a little more than 2^LOOKUP_BITS rows total in our circuit
+            assert!(lookup_bits < k, "LOOKUP_BITS needs to be less than DEGREE");
+            lookup_bits
+        })
+        .ok();
+    let params = gen_srs(k as u32);
+
+    let pf_time = start_timer!(|| "Creating KZG proof using SHPLONK multi-open scheme");
+    // we time creation of the builder because this is the witness generation stage and can only
+    // be done after the private inputs are known
+    let mut builder = GateThreadBuilder::prover();
+    let mut assigned_instances = vec![];
+    f(builder.main(0), private_inputs, &mut assigned_instances);
+    let public_io: Vec<Fr> = assigned_instances.iter().map(|v| *v.value()).collect();
+    // once again, we have a pre-determined way to break up the builder "threads" into an optimal
+    // circuit shape, so we create the prover circuit from this information (`break_points`)
+    let proof = if lookup_bits.is_some() {
+        let circuit = RangeWithInstanceCircuitBuilder {
+            circuit: RangeCircuitBuilder::prover(builder, break_points),
+            assigned_instances,
+        };
+        let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+        create_proof::<
+            KZGCommitmentScheme<Bn256>,
+            ProverSHPLONK<'_, Bn256>,
+            Challenge255<G1Affine>,
+            _,
+            Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
+            _,
+        >(&params, pk, &[circuit], &[&[&public_io]], OsRng, &mut transcript)
+        .expect("proof generation failed");
+        transcript.finalize()
+    } else {
+        let circuit = GateWithInstanceCircuitBuilder {
+            circuit: GateCircuitBuilder::prover(builder, break_points),
+            assigned_instances,
+        };
+        let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
+        create_proof::<
+            KZGCommitmentScheme<Bn256>,
+            ProverSHPLONK<'_, Bn256>,
+            Challenge255<G1Affine>,
+            _,
+            Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
+            _,
+        >(&params, pk, &[circuit], &[&[&public_io]], OsRng, &mut transcript)
+        .expect("proof generation failed");
+        transcript.finalize()
+    };
+    end_timer!(pf_time);
+
+    let strategy = SingleStrategy::new(&params);
+    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+    let verify_time = start_timer!(|| "verify");
+    verify_proof::<
+        KZGCommitmentScheme<Bn256>,
+        VerifierSHPLONK<'_, Bn256>,
+        Challenge255<G1Affine>,
+        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+        SingleStrategy<'_, Bn256>,
+    >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
+    .unwrap();
+    end_timer!(verify_time);
+
+    println!("Congratulations! Your ZK proof is valid!");
+    
     public_io
 }
 

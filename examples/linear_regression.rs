@@ -3,6 +3,7 @@ use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::AssignedValue;
 use halo2_base::Context;
 use halo2_scaffold::gadget::linear_regression::LinearRegressionChip;
+use halo2_scaffold::scaffold::{gen_key, prove_private};
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
 use log::warn;
@@ -126,8 +127,8 @@ fn main() {
     set_var("RUST_LOG", "warn");
     env_logger::init();
     // genrally lookup_bits is degree - 1
-    set_var("LOOKUP_BITS", 12.to_string());
-    set_var("DEGREE", 13.to_string());
+    set_var("LOOKUP_BITS", 15.to_string());
+    set_var("DEGREE", 16.to_string());
 
     // run mock prover
     // let x0 = vec![
@@ -174,15 +175,16 @@ fn main() {
 
     let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
     let mut out = vec![];
-    // let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
+    let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
+    let (pk, break_points) = gen_key(train, dummy_inputs);
     for idx_epoch in 0..epoch {
         warn!("Epoch {:?}", idx_epoch + 1);
         for idx_batch in 0..n_batch {
             let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
             let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
             let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
-            // out = prove(train, private_inputs, dummy_inputs.clone());
-            out = mock(train, private_inputs);
+            out = prove_private(train, private_inputs, &pk, break_points.clone());
+            // out = mock(train, private_inputs);
             w = (&out[..dim]).iter().map(|wi| (*wi).clone()).collect();
             b = out[dim];
         }
