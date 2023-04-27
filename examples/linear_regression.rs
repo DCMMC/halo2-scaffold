@@ -6,6 +6,7 @@ use halo2_scaffold::gadget::linear_regression::LinearRegressionChip;
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
 use log::debug;
+use std::cmp::max;
 use std::env::{var, set_var};
 use linfa::prelude::*;
 use linfa_linear::LinearRegression;
@@ -137,8 +138,8 @@ fn main() {
     for idx_epoch in 0..epoch {
         debug!("Epoch {:?}", idx_epoch + 1);
         for idx_batch in 0..n_batch {
-            let batch_x = (&train_x[idx_batch as usize * batch_size..(idx_batch as usize + 1) * batch_size]).to_vec();
-            let batch_y = (&train_y[idx_batch as usize * batch_size..(idx_batch as usize + 1) * batch_size]).to_vec();
+            let batch_x = (&train_x[idx_batch as usize * batch_size..max(train_x.len(), idx_batch as usize + 1) * batch_size]).to_vec();
+            let batch_y = (&train_y[idx_batch as usize * batch_size..max(train_y.len(), idx_batch as usize + 1) * batch_size]).to_vec();
             let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
             // out = prove(train, private_inputs, dummy_inputs.clone());
             out = mock(train, private_inputs);
