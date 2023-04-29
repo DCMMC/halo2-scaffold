@@ -82,6 +82,7 @@ pub fn gen_aggregation_evm_verifier(
     vk: &VerifyingKey<G1Affine>,
     num_instance: Vec<usize>,
     accumulator_indices: Vec<(usize, usize)>,
+    output_path: String
 ) -> Result<DeploymentCode, AggregationError> {
     let protocol = compile(
         params,
@@ -97,13 +98,13 @@ pub fn gen_aggregation_evm_verifier(
     let mut transcript = EvmTranscript::<_, Rc<EvmLoader>, _, _>::new(&loader);
 
     let instances = transcript.load_instances(num_instance);
-    let proof: PlonkProof<G1Affine, Rc<EvmLoader>, KzgAs<Bn256, Gwc19>> = PlonkVerifier::<KzgAs<Bn256, Gwc19>, LimbsEncoding<4, 68>>::read_proof(&vk, &protocol, &instances, &mut transcript)
+    let proof: PlonkProof<G1Affine, Rc<EvmLoader>, KzgAs<Bn256, Gwc19>> = PlonkVerifier::<KzgAs<Bn256, Gwc19>, LimbsEncoding<4, 68>>::read_proof(
+        &vk, &protocol, &instances, &mut transcript)
         .map_err(|_| AggregationError::ProofRead)?;
     PlonkVerifier::<KzgAs<Bn256, Gwc19>, LimbsEncoding<4, 68>>::verify(&vk, &protocol, &instances, &proof)
         .map_err(|_| AggregationError::ProofVerify)?;
 
-    let path = var("GEN_AGG_EVM").unwrap() + ".yul";
-    let mut file = std::fs::File::create(path).map_err(Box::<dyn RawError>::from).unwrap();
+    let mut file = std::fs::File::create(output_path).map_err(Box::<dyn RawError>::from).unwrap();
     file.write_all(&loader.yul_code().as_bytes())
         .map_err(Box::<dyn RawError>::from).unwrap();
     Ok(DeploymentCode {
@@ -120,6 +121,7 @@ pub fn evm_verify(
 
     let calldata = encode_calldata(&snark.instances, &snark.proof);
     debug!("calldata size: {:?}, instances: {:?}", calldata.len(), snark.instances);
+    debug!("calldata: {:?}", calldata.clone());
     let mut evm = ExecutorBuilder::default()
         .with_gas_limit(u64::MAX.into())
         .build();
@@ -318,6 +320,17 @@ pub fn prove<T>(
         .expect("proof generation failed");
         let proof = transcript.finalize();
 
+        let path = "params/zk_range_proof.yul".to_string();
+        let deployment_code = gen_aggregation_evm_verifier(
+            &params,
+            &pk.get_vk(),
+            num_instance.clone(),
+            vec![],
+            path
+        ).unwrap();
+        let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
+        deployment_code.save(&deployment_code_path).unwrap();
+
         proof
     } else {
         let circuit = GateWithInstanceCircuitBuilder {
@@ -334,9 +347,38 @@ pub fn prove<T>(
             _,
         >(&params, &pk, &[circuit], &[&[&public_io]], OsRng, &mut transcript)
         .expect("proof generation failed");
-        transcript.finalize()
+        let proof = transcript.finalize();
+
+        let path = "params/zk_range_proof.yul".to_string();
+        let deployment_code = gen_aggregation_evm_verifier(
+            &params,
+            &pk.get_vk(),
+            num_instance.clone(),
+            vec![],
+            path
+        ).unwrap();
+        let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
+        deployment_code.save(&deployment_code_path).unwrap();
+
+        proof
     };
     end_timer!(pf_time);
+
+    // let strategy = SingleStrategy::new(&params);
+    let strategy = AccumulatorStrategy::new(&params);
+    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+    let verify_time = start_timer!(|| "verify");
+    verify_proof::<
+        KZGCommitmentScheme<Bn256>,
+        VerifierSHPLONK<'_, Bn256>,
+        Challenge255<G1Affine>,
+        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+        // SingleStrategy<'_, Bn256>,
+        AccumulatorStrategy<'_, Bn256>,
+    >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
+    .unwrap();
+    end_timer!(verify_time);
+
     match var("GEN_AGG_EVM") {
         Ok(gen_agg_evm_file) => {
             let agg_time = start_timer!(|| "Generating EVM agg proof verifier");
@@ -349,6 +391,11 @@ pub fn prove<T>(
                 Config::kzg().with_num_instance(num_instance),
             );
             let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
+
+            let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
+            let code = DeploymentCode::load(&deployment_code_path).unwrap();
+            evm_verify(code, checkable_pf.clone()).unwrap();
+
             let mut snarks = Vec::new();
             snarks.push(checkable_pf);
             let agg_circuit = AggregationCircuit::new(&params, snarks).unwrap();
@@ -358,11 +405,13 @@ pub fn prove<T>(
             ).unwrap();
             
             let agg_vk = agg_pk.get_vk();
+            let path = var("GEN_AGG_EVM").unwrap() + ".yul";
             let deployment_code = gen_aggregation_evm_verifier(
                 &agg_params,
                 &agg_vk,
                 agg_circuit.num_instance(),
                 AggregationCircuit::accumulator_indices(),
+                path
             ).unwrap();
             let deployment_code_path = PathBuf::from(gen_agg_evm_file.clone());
             deployment_code.save(&deployment_code_path).unwrap();
@@ -386,21 +435,6 @@ pub fn prove<T>(
         },
         _ => ()
     }
-
-    // let strategy = SingleStrategy::new(&params);
-    let strategy = AccumulatorStrategy::new(&params);
-    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
-    let verify_time = start_timer!(|| "verify");
-    verify_proof::<
-        KZGCommitmentScheme<Bn256>,
-        VerifierSHPLONK<'_, Bn256>,
-        Challenge255<G1Affine>,
-        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
-        // SingleStrategy<'_, Bn256>,
-        AccumulatorStrategy<'_, Bn256>,
-    >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
-    .unwrap();
-    end_timer!(verify_time);
 
     println!("Congratulations! Your ZK proof is valid!");
 }
@@ -452,7 +486,7 @@ impl<F: ScalarField> Circuit<F> for GateWithInstanceCircuitBuilder<F> {
                 let (cell, _) = assigned_advices
                     .get(&(cell.context_id, cell.offset))
                     .expect("instance not assigned");
-                layouter.constrain_instance(*cell, config.instance, i);
+                layouter.constrain_instance(*cell, config.instance, i).unwrap();
             }
         }
         Ok(())
@@ -516,7 +550,7 @@ impl<F: ScalarField> Circuit<F> for RangeWithInstanceCircuitBuilder<F> {
                 let (cell, _) = assigned_advices
                     .get(&(cell.context_id, cell.offset))
                     .expect("instance not assigned");
-                layouter.constrain_instance(*cell, config.instance, i);
+                layouter.constrain_instance(*cell, config.instance, i).unwrap();
             }
         }
         Ok(())

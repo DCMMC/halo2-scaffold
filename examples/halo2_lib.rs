@@ -1,3 +1,5 @@
+use std::env::set_var;
+
 use halo2_base::gates::{GateChip, GateInstructions};
 use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
 use halo2_base::utils::ScalarField;
@@ -60,7 +62,11 @@ fn some_algorithm_in_zk<F: ScalarField>(
 }
 
 fn main() {
+    set_var("RUST_LOG", "debug");
     env_logger::init();
+    // Must has at least 20 degree to generate the aggregated proof with the recursived ZK
+    set_var("DEGREE", 9.to_string());
+    set_var("GEN_AGG_EVM", "params/zk_evm.code");
 
     // we create a random public input
     let x = Fr::random(OsRng);
@@ -68,5 +74,5 @@ fn main() {
     mock(some_algorithm_in_zk, x);
 
     // uncomment below to run actual prover:
-    // prove(some_algorithm_in_zk, x, Fr::zero()); // the Fr::zero() is a dummy input to provide for the proving key generation
+    prove(some_algorithm_in_zk, x, Fr::zero()); // the Fr::zero() is a dummy input to provide for the proving key generation
 }
