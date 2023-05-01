@@ -501,15 +501,10 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         F: BigPrimeField
     {
         let a = a.into();
-        let a_assigned = self.gate().add(ctx, a, Constant(F::zero()));
-        let a_bits = self.gate().num_to_bits(ctx, a_assigned, 254);
-        // for example, PRECISION_BITS = 63, then neg_point_bits = 1..10..0 where has 127 ones and 254 - 127 zeros
-        let neg_point_bits: Vec<QuantumCell<F>> = BitVec::<_, Lsb0>::from_vec(
-            (BigUint::from(2u32).pow(254u32) - 2u128.pow(PRECISION_BITS * 2 + 1)).to_bytes_le()
-        ).into_iter().map(|x| Constant(F::from_u128(x as u128))).collect();
-        let inner_product = self.gate().inner_product(ctx, a_bits, neg_point_bits);
-        // >= 0
-        let is_pos = self.gate().is_zero(ctx, inner_product);
+        let a_num_bits = 254;
+        let (a_shift, _) = self.range_gate().div_mod(
+            ctx, a, BigUint::from(2u32).pow((PRECISION_BITS * 2 + 1)as u32), a_num_bits);
+        let is_pos = self.gate().is_zero(ctx, a_shift);
         let is_neg = self.gate().not(ctx, is_pos);
 
         is_neg
