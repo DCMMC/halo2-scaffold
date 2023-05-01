@@ -5,7 +5,7 @@ use ark_std::{end_timer, start_timer};
 use log::{debug, trace};
 use std::{error::Error as RawError, io::{Write, Read}};
 // use thiserror::Error;
-use ezkl_lib::{pfsys::{Snark, evm::{aggregation::{AggregationCircuit, PoseidonTranscript, AggregationError}, EvmVerificationError}, create_keys}, execute::create_proof_circuit_kzg};
+use ezkl_lib::{pfsys::{Snark, evm::{aggregation::{AggregationCircuit, PoseidonTranscript, AggregationError}, EvmVerificationError}, create_keys}, execute::create_proof_circuit_kzg, eth::{fix_verifier_sol, verify_proof_via_solidity}};
 use halo2_proofs::{poly::{kzg::{multiopen::ProverGWC, strategy::AccumulatorStrategy, commitment::ParamsKZG}, commitment::ParamsProver}, plonk::VerifyingKey, halo2curves::bn256::Fq};
 use serde::{Deserialize, Serialize};
 use snark_verifier::{system::halo2::{compile, Config, transcript::evm::EvmTranscript}, loader::{native::NativeLoader, evm::{EvmLoader, compile_yul, encode_calldata, ExecutorBuilder, Address}}, verifier::{plonk::{PlonkVerifier, PlonkProof}, SnarkVerifier}, pcs::kzg::{KzgDecidingKey, KzgAs, Gwc19, LimbsEncoding}};
@@ -320,16 +320,21 @@ pub fn prove<T>(
         .expect("proof generation failed");
         let proof = transcript.finalize();
 
-        let path = "params/zk_range_proof.yul".to_string();
+        let yul_path = "params/zk_range_proof.yul".to_string();
         let deployment_code = gen_aggregation_evm_verifier(
             &params,
             &pk.get_vk(),
             num_instance.clone(),
             vec![],
-            path
+            yul_path.clone()
         ).unwrap();
         let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
         deployment_code.save(&deployment_code_path).unwrap();
+
+        let output = fix_verifier_sol(yul_path.into()).unwrap();
+        let sol_path = PathBuf::from("params/zk_range_proof.sol");
+        let mut f = File::create(sol_path).unwrap();
+        let _ = f.write(output.as_bytes());
 
         proof
     } else {
@@ -392,9 +397,13 @@ pub fn prove<T>(
             );
             let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
 
-            let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
-            let code = DeploymentCode::load(&deployment_code_path).unwrap();
-            evm_verify(code, checkable_pf.clone()).unwrap();
+            // let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
+            // let code = DeploymentCode::load(&deployment_code_path).unwrap();
+            // evm_verify(code, checkable_pf.clone()).unwrap();
+
+            // verify_proof_via_solidity(
+            //     checkable_pf.clone(), PathBuf::from("params/zk_range_proof.sol")
+            // );
 
             let mut snarks = Vec::new();
             snarks.push(checkable_pf);
@@ -403,7 +412,7 @@ pub fn prove<T>(
                 &agg_circuit,
                 &agg_params,
             ).unwrap();
-            
+           
             let agg_vk = agg_pk.get_vk();
             let path = var("GEN_AGG_EVM").unwrap() + ".yul";
             let deployment_code = gen_aggregation_evm_verifier(

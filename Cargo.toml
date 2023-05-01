@@ -10,7 +10,7 @@ rand = "0.8"
 ark-std = { version = "0.3.0", features = ["print-trace"] }
 
 # halo2
-halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02" }
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v2023_02_02", features = ["dev-graph"] }
 
 # Axiom's helper API with basic functions 
 halo2-base = { git = "https://github.com/axiom-crypto/halo2-lib", rev = "abc9bb7", default-features = false, features = ["halo2-pse", "halo2-pse"] }
@@ -22,6 +22,7 @@ serde = { version = "1.0.126", features = ["derive"] }
 ezkl-lib = { git = "https://github.com/DCMMC/ezkl", branch = "public-aggregation-chip" }
 bitvec = "1"
 thiserror = "1.0"
+plotters = "0.3"
 
 log = "0.4"
 env_logger = "0.10"
