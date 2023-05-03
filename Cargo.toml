@@ -23,6 +23,8 @@ ezkl-lib = { git = "https://github.com/DCMMC/ezkl", branch = "public-aggregation
 bitvec = "1"
 thiserror = "1.0"
 plotters = "0.3"
+futures = "0.3"
+ethers = { version = "2.0.1", features = ["ledger"] }
 
 log = "0.4"
 env_logger = "0.10"

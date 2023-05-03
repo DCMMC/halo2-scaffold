@@ -57,7 +57,7 @@ fn main() {
     env_logger::init();
     set_var("LOOKUP_BITS", 8.to_string());
     set_var("DEGREE", 9.to_string());
-    // set_var("GEN_AGG_EVM", "params/zk_range_agg_evm.code");
+    set_var("GEN_AGG_EVM", "params/zk_range_agg_evm.code");
 
     // run mock prover
     mock(some_algorithm_in_zk, [Fr::from(101), Fr::from(100), Fr::from(200)]);

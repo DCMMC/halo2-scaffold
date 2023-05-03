@@ -3,13 +3,16 @@
 //! We recommend not reading this module on first (or second) pass.
 use ark_std::{end_timer, start_timer};
 use log::{debug, trace};
-use std::{error::Error as RawError, io::{Write, Read}};
+use std::{error::Error as RawError, io::{Read, BufReader, BufRead, Write}};
 // use thiserror::Error;
 use ezkl_lib::{pfsys::{Snark, evm::{aggregation::{AggregationCircuit, PoseidonTranscript, AggregationError}, EvmVerificationError}, create_keys}, execute::create_proof_circuit_kzg, eth::{fix_verifier_sol, verify_proof_via_solidity}};
 use halo2_proofs::{poly::{kzg::{multiopen::ProverGWC, strategy::AccumulatorStrategy, commitment::ParamsKZG}, commitment::ParamsProver}, plonk::VerifyingKey, halo2curves::bn256::Fq};
 use serde::{Deserialize, Serialize};
-use snark_verifier::{system::halo2::{compile, Config, transcript::evm::EvmTranscript}, loader::{native::NativeLoader, evm::{EvmLoader, compile_yul, encode_calldata, ExecutorBuilder, Address}}, verifier::{plonk::{PlonkVerifier, PlonkProof}, SnarkVerifier}, pcs::kzg::{KzgDecidingKey, KzgAs, Gwc19, LimbsEncoding}};
+use snark_verifier::{system::halo2::{compile, Config, transcript::evm::EvmTranscript}, loader::{native::NativeLoader, evm::{EvmLoader, compile_yul, encode_calldata, ExecutorBuilder, Address, U256}}, verifier::{plonk::{PlonkVerifier, PlonkProof}, SnarkVerifier}, pcs::kzg::{KzgDecidingKey, KzgAs, Gwc19, LimbsEncoding}};
 // use snark_verifier_sdk::halo2::aggregation::PublicAggregationCircuit;
+// use futures::executor;
+// use ethers::abi::ethabi::Bytes;
+use std::fmt::Write as FmtWrite;
 
 use halo2_base::{
     gates::{
@@ -331,10 +334,10 @@ pub fn prove<T>(
         let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
         deployment_code.save(&deployment_code_path).unwrap();
 
-        let output = fix_verifier_sol(yul_path.into()).unwrap();
-        let sol_path = PathBuf::from("params/zk_range_proof.sol");
-        let mut f = File::create(sol_path).unwrap();
-        let _ = f.write(output.as_bytes());
+        // let output = fix_verifier_sol(yul_path.into()).unwrap();
+        // let sol_path = PathBuf::from("params/zk_range_proof.sol");
+        // let mut f = File::create(sol_path).unwrap();
+        // let _ = f.write(output.as_bytes());
 
         proof
     } else {
@@ -397,13 +400,30 @@ pub fn prove<T>(
             );
             let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
 
-            // let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
-            // let code = DeploymentCode::load(&deployment_code_path).unwrap();
-            // evm_verify(code, checkable_pf.clone()).unwrap();
+            let mut public_inputs = vec![];
+            for val in &checkable_pf.instances[0] {
+                let bytes = val.to_repr();
+                let u = U256::from_little_endian(bytes.as_slice());
+                public_inputs.push(u);
+            }
+            let proof = ethers::types::Bytes::from(checkable_pf.proof.to_vec());
+            println!("debug pubInputs: {:?}, proof: {:?}", public_inputs, proof);
 
-            // verify_proof_via_solidity(
-            //     checkable_pf.clone(), PathBuf::from("params/zk_range_proof.sol")
-            // );
+            // let deployment_code_path = PathBuf::from("params/zk_range_proof.yul".to_string());
+            // let file = File::open(deployment_code_path.clone()).unwrap();
+            // let reader = BufReader::new(file);
+            // let yul_code = reader.lines().map(|line| line.unwrap().replace(
+            //     "staticcall(gas(), 0x6", "staticcall(500, 0x6").replace(
+            //         "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
+            //     ).collect::<Vec<String>>().join("\n");
+            // let code = DeploymentCode { code: compile_yul(&yul_code) };
+            // evm_verify(code, checkable_pf.clone()).unwrap();
+            // println!("calldata of original proof: {:?}", encode_calldata(&checkable_pf.instances, &checkable_pf.proof));
+
+            // executor::block_on(verify_proof_via_solidity(
+            //     checkable_pf.clone(), PathBuf::from(
+            //         "params/zk_range_proof.sol")
+            // )).unwrap();
 
             let mut snarks = Vec::new();
             snarks.push(checkable_pf);
@@ -414,17 +434,17 @@ pub fn prove<T>(
             ).unwrap();
            
             let agg_vk = agg_pk.get_vk();
-            let path = var("GEN_AGG_EVM").unwrap() + ".yul";
+            let yul_path = var("GEN_AGG_EVM").unwrap() + ".yul";
             let deployment_code = gen_aggregation_evm_verifier(
                 &agg_params,
                 &agg_vk,
                 agg_circuit.num_instance(),
                 AggregationCircuit::accumulator_indices(),
-                path
+                yul_path.clone()
             ).unwrap();
             let deployment_code_path = PathBuf::from(gen_agg_evm_file.clone());
             deployment_code.save(&deployment_code_path).unwrap();
-            let agg_proof_path = PathBuf::from(gen_agg_evm_file + ".pf");
+            let agg_proof_path = PathBuf::from(gen_agg_evm_file.clone() + ".pf");
             end_timer!(agg_time);
 
             let evm_verify_time = start_timer!(|| "Verify proof on-chain");
@@ -438,7 +458,13 @@ pub fn prove<T>(
                 ezkl_lib::circuit::base::CheckMode::SAFE,
             ).unwrap();
             snark_proof.save(&agg_proof_path).unwrap();
-            let code = DeploymentCode::load(&deployment_code_path).unwrap();
+            let file = File::open(yul_path.clone()).unwrap();
+            let reader = BufReader::new(file);
+            let yul_code = reader.lines().map(|line| line.unwrap().replace(
+                "staticcall(gas(), 0x6", "staticcall(500, 0x6").replace(
+                    "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
+            ).collect::<Vec<String>>().join("\n");
+            let code = DeploymentCode { code: compile_yul(&yul_code) };
             evm_verify(code, snark_proof.clone()).unwrap();
             end_timer!(evm_verify_time);
         },
