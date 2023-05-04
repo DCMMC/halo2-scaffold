@@ -6,7 +6,6 @@ use halo2_base::{
 };
 use halo2_base::QuantumCell::{Constant, Existing, Witness};
 use num_bigint::{BigUint};
-use bitvec::{order::Lsb0, vec::BitVec};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FixedPointStrategy {

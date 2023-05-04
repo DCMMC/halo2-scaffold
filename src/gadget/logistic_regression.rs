@@ -5,6 +5,7 @@ use halo2_base::{
 use log::warn;
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use std::convert::From;
+use halo2_base::QuantumCell::Constant;
 
 #[derive(Clone, Debug)]
 pub struct LogisticRegressionChip<F: ScalarField> {
@@ -29,9 +30,13 @@ impl<F: ScalarField> LogisticRegressionChip<F> {
     where 
         F: BigPrimeField, QA: Into<QuantumCell<F>> + Copy
     {
-        
         let wx = self.chip.inner_product(ctx, w, x);
-        let y = self.chip.qadd(ctx, wx, b);
+        let logit = self.chip.qadd(ctx, wx, b);
+        let neg_logit = self.chip.neg(ctx, logit);
+        let exp_logit = self.chip.qexp(ctx, neg_logit);
+        let one = Constant(self.chip.quantization(1.0));
+        let exp_logit_p1 = self.chip.qadd(ctx, exp_logit, one);
+        let y = self.chip.qdiv(ctx, one, exp_logit_p1);
 
         y
     }

@@ -2,15 +2,13 @@ use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::AssignedValue;
 use halo2_base::Context;
-use halo2_scaffold::gadget::linear_regression::LinearRegressionChip;
+use halo2_scaffold::gadget::logistic_regression::LogisticRegressionChip;
 use halo2_scaffold::scaffold::{gen_key, prove_private};
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
-use log::warn;
 use std::cmp::min;
 use std::env::{var, set_var};
 use linfa::prelude::*;
-use linfa_linear::LinearRegression;
 use linfa_logistic::LogisticRegression;
 use ndarray::{Array, Axis};
 
@@ -56,7 +54,7 @@ pub fn train<F: ScalarField>(
 ) where F: BigPrimeField {
     let lookup_bits =
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
-    let chip = LinearRegressionChip::<F>::new(lookup_bits);
+    let chip = LogisticRegressionChip::<F>::new(lookup_bits);
 
     let (w, b, train_x, train_y, learning_rate) = input;
     let mut w = w.iter().map(
@@ -88,7 +86,7 @@ pub fn inference<F: ScalarField>(
     // lookup bits must agree with the size of the lookup table, which is specified by an environmental variable
     let lookup_bits =
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
-    let chip = LinearRegressionChip::<F>::new(lookup_bits);
+    let chip = LogisticRegressionChip::<F>::new(lookup_bits);
 
     let x_deq: Vec<F> = x.iter().map(|xi| {
         chip.chip.quantization(*xi)
@@ -100,14 +98,18 @@ pub fn inference<F: ScalarField>(
         make_public.push(xi);
     }
 
-    let dataset = linfa_datasets::diabetes();
-    let lin_reg = LinearRegression::new();
-    let model = lin_reg.fit(&dataset).unwrap();
+    let (train, _) = linfa_datasets::winequality()
+        .map_targets(|x| if *x > 6 { 1 } else { 0 })
+        .split_with_ratio(0.9);
+    let model = LogisticRegression::default()
+        .max_iterations(150)
+        .fit(&train)
+        .unwrap();
     println!("intercept:  {}", model.intercept());
     println!("parameters: {}", model.params());
 
     let sample_x = Array::from_vec(x);
-    let ypred = model.predict(sample_x.insert_axis(Axis(0))).targets()[0];
+    let ypred: f64 = model.predict_probabilities(&sample_x.insert_axis(Axis(0)))[0] as f64;
 
     let mut w = vec![];
     for wi in model.params().iter() {
@@ -132,7 +134,7 @@ fn main() {
     set_var("DEGREE", 16.to_string());
 
     let (train, valid) = linfa_datasets::winequality()
-        .map_targets(|x| if *x > 6 { "good" } else { "bad" })
+        .map_targets(|x| if *x > 6 { 1 } else { 0 })
         .split_with_ratio(0.9);
     let model = LogisticRegression::default()
         .max_iterations(150)
@@ -142,6 +144,22 @@ fn main() {
     let cm = pred.confusion_matrix(&valid).unwrap();
     println!("{:?}", cm);
     println!("accuracy {}, MCC {}", cm.accuracy(), cm.mcc());
+    println!("intercept:  {}", model.intercept());
+    println!("parameters: {}", model.params());
+
+    let x0 = vec![
+        -0.00188201652779104, -0.044641636506989, -0.0514740612388061, -0.0263278347173518,
+        -0.00844872411121698, -0.019163339748222, 0.0744115640787594, -0.0394933828740919,
+        -0.0683297436244215, -0.09220404962683, 0.23];
+    let x1 = vec![
+        -0.123134, -0.129089, -0.0514740612388061, -0.21,
+        -0.4353, -0.019163339748222, 0.4242, -0.44,
+        -0.2341, -0.231, 0.32];
+    prove(
+        inference,
+        x0.clone(),
+        x1.clone()
+    );
 
     // let dataset = linfa_datasets::diabetes();
     // let lin_reg = LinearRegression::new();
