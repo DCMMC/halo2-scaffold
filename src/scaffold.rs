@@ -229,7 +229,7 @@ pub fn mock<T>(
 ///
 /// * `private_inputs` are the private inputs you want to prove a computation on.
 /// * `dummy_inputs` are some dummy private inputs, in the correct format for your circuit, that should be used just for proving key generation. They can be the same as `private_inputs` for testing, but in production the proving key is generated only once, so `dummy_inputs` is usually different from `private_inputs` and it is best to test your circuit using different inputs to make sure you don't have any missed logic.
-pub fn prove<T>(
+pub fn prove<T: Copy>(
     f: impl Fn(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
     private_inputs: T,
     dummy_inputs: T,
@@ -295,7 +295,7 @@ pub fn prove<T>(
     // be done after the private inputs are known
     let mut builder = GateThreadBuilder::prover();
     let mut assigned_instances = vec![];
-    f(builder.main(0), private_inputs, &mut assigned_instances);
+    f(builder.main(0), private_inputs.clone(), &mut assigned_instances);
     let public_io: Vec<Fr> = assigned_instances.iter().map(|v| *v.value()).collect();
     debug!("public_io: {:?}", public_io);
     let num_instance = vec![public_io.len()]; 
@@ -304,7 +304,7 @@ pub fn prove<T>(
     // circuit shape, so we create the prover circuit from this information (`break_points`)
     let proof = if lookup_bits.is_some() {
         let circuit = RangeWithInstanceCircuitBuilder {
-            circuit: RangeCircuitBuilder::prover(builder, break_points),
+            circuit: RangeCircuitBuilder::prover(builder, break_points.clone()),
             assigned_instances,
         };
         // let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
@@ -333,6 +333,34 @@ pub fn prove<T>(
         ).unwrap();
         let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
         deployment_code.save(&deployment_code_path).unwrap();
+
+        let deployment_code_path = PathBuf::from("params/zk_range_proof.yul".to_string());
+        let file = File::open(deployment_code_path.clone()).unwrap();
+        let reader = BufReader::new(file);
+        let yul_code = reader.lines().map(|line| line.unwrap().replace(
+            "staticcall(gas(), 0x6", "staticcall(500, 0x6").replace(
+                "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
+            ).collect::<Vec<String>>().join("\n");
+        let code = DeploymentCode { code: compile_yul(&yul_code) };
+        assigned_instances = vec![];
+        let mut new_builder = GateThreadBuilder::prover();
+        f(new_builder.main(0), private_inputs.clone(), &mut assigned_instances);
+        println!("##### debug 11111 {:?}", new_builder.witness_gen_only());
+        let circuit_new = RangeWithInstanceCircuitBuilder {
+            circuit: RangeCircuitBuilder::prover(new_builder, break_points.clone()),
+            assigned_instances,
+        };
+        let snark_proof = create_proof_circuit_kzg(
+            circuit_new,
+            &params,
+            vec![public_io.clone()],
+            &pk,
+            ezkl_lib::commands::TranscriptType::EVM,
+            AccumulatorStrategy::new(&params),
+            ezkl_lib::circuit::base::CheckMode::SAFE,
+        ).unwrap();
+        evm_verify(code, snark_proof.clone()).unwrap();
+        println!("calldata of original proof: {:?}", encode_calldata(&snark_proof.instances, &snark_proof.proof));
 
         // let output = fix_verifier_sol(yul_path.into()).unwrap();
         // let sol_path = PathBuf::from("params/zk_range_proof.sol");
@@ -408,17 +436,6 @@ pub fn prove<T>(
             }
             let proof = ethers::types::Bytes::from(checkable_pf.proof.to_vec());
             println!("debug pubInputs: {:?}, proof: {:?}", public_inputs, proof);
-
-            // let deployment_code_path = PathBuf::from("params/zk_range_proof.yul".to_string());
-            // let file = File::open(deployment_code_path.clone()).unwrap();
-            // let reader = BufReader::new(file);
-            // let yul_code = reader.lines().map(|line| line.unwrap().replace(
-            //     "staticcall(gas(), 0x6", "staticcall(500, 0x6").replace(
-            //         "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
-            //     ).collect::<Vec<String>>().join("\n");
-            // let code = DeploymentCode { code: compile_yul(&yul_code) };
-            // evm_verify(code, checkable_pf.clone()).unwrap();
-            // println!("calldata of original proof: {:?}", encode_calldata(&checkable_pf.instances, &checkable_pf.proof));
 
             // executor::block_on(verify_proof_via_solidity(
             //     checkable_pf.clone(), PathBuf::from(
@@ -580,6 +597,7 @@ impl<F: ScalarField> Circuit<F> for RangeWithInstanceCircuitBuilder<F> {
         if !witness_gen_only {
             // expose public instances
             let mut layouter = layouter.namespace(|| "expose");
+            println!("debug assigned ins: {:?}", self.assigned_instances);
             for (i, instance) in self.assigned_instances.iter().enumerate() {
                 let cell = instance.cell.unwrap();
                 let (cell, _) = assigned_advices

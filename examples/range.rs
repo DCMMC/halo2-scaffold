@@ -53,7 +53,7 @@ fn some_algorithm_in_zk<F: ScalarField>(
 }
 
 fn main() {
-    set_var("RUST_LOG", "debug");
+    set_var("RUST_LOG", "trace");
     env_logger::init();
     set_var("LOOKUP_BITS", 8.to_string());
     set_var("DEGREE", 9.to_string());
