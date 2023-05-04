@@ -123,8 +123,8 @@ pub fn evm_verify(
     debug!("evm deployment code length: {:?}", deployment_code.len());
 
     let calldata = encode_calldata(&snark.instances, &snark.proof);
-    debug!("calldata size: {:?}, instances: {:?}", calldata.len(), snark.instances);
-    debug!("calldata: {:?}", calldata.clone());
+    debug!("calldata size: {:?}", calldata.len());
+    // debug!("calldata: {:?}", calldata.clone());
     let mut evm = ExecutorBuilder::default()
         .with_gas_limit(u64::MAX.into())
         .build();
@@ -317,7 +317,8 @@ pub fn prove<T: Copy>(
             _,
             _,
             // Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
-            PoseidonTranscript<NativeLoader, _>,
+            // PoseidonTranscript<NativeLoader, _>,
+            EvmTranscript<G1Affine, _, _, _>,
             _,
         >(&params, &pk, &[circuit], &[&[&public_io]], OsRng, &mut transcript)
         .expect("proof generation failed");
@@ -342,25 +343,33 @@ pub fn prove<T: Copy>(
                 "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
             ).collect::<Vec<String>>().join("\n");
         let code = DeploymentCode { code: compile_yul(&yul_code) };
-        assigned_instances = vec![];
-        let mut new_builder = GateThreadBuilder::prover();
-        f(new_builder.main(0), private_inputs.clone(), &mut assigned_instances);
-        println!("##### debug 11111 {:?}", new_builder.witness_gen_only());
-        let circuit_new = RangeWithInstanceCircuitBuilder {
-            circuit: RangeCircuitBuilder::prover(new_builder, break_points.clone()),
-            assigned_instances,
-        };
-        let snark_proof = create_proof_circuit_kzg(
-            circuit_new,
+        // assigned_instances = vec![];
+        // let mut new_builder = GateThreadBuilder::prover();
+        // f(new_builder.main(0), private_inputs.clone(), &mut assigned_instances);
+        // println!("##### debug 11111 {:?}", new_builder.witness_gen_only());
+        // let circuit_new = RangeWithInstanceCircuitBuilder {
+        //     circuit: RangeCircuitBuilder::prover(new_builder, break_points.clone()),
+        //     assigned_instances,
+        // };
+        // let snark_proof = create_proof_circuit_kzg(
+        //     circuit_new,
+        //     &params,
+        //     vec![public_io.clone()],
+        //     &pk,
+        //     ezkl_lib::commands::TranscriptType::EVM,
+        //     AccumulatorStrategy::new(&params),
+        //     ezkl_lib::circuit::base::CheckMode::SAFE,
+        // ).unwrap();
+        let protocol = compile::<_, _>(
             &params,
-            vec![public_io.clone()],
-            &pk,
-            ezkl_lib::commands::TranscriptType::EVM,
-            AccumulatorStrategy::new(&params),
-            ezkl_lib::circuit::base::CheckMode::SAFE,
-        ).unwrap();
+            pk.get_vk(),
+            Config::kzg().with_num_instance(num_instance.clone()),
+        );
+        let mut assigned_ins_vec = Vec::new();
+            assigned_ins_vec.push(assigned_instances_copy.clone().into_iter().map(|x| *x.value()).collect());
+        let snark_proof = Snark::new(protocol, assigned_ins_vec.clone(), proof.clone());
         evm_verify(code, snark_proof.clone()).unwrap();
-        println!("calldata of original proof: {:?}", encode_calldata(&snark_proof.instances, &snark_proof.proof));
+        // println!("calldata of original proof: {:?}", encode_calldata(&snark_proof.instances, &snark_proof.proof));
 
         // let output = fix_verifier_sol(yul_path.into()).unwrap();
         // let sol_path = PathBuf::from("params/zk_range_proof.sol");
@@ -401,19 +410,19 @@ pub fn prove<T: Copy>(
     end_timer!(pf_time);
 
     // let strategy = SingleStrategy::new(&params);
-    let strategy = AccumulatorStrategy::new(&params);
-    let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
-    let verify_time = start_timer!(|| "verify");
-    verify_proof::<
-        KZGCommitmentScheme<Bn256>,
-        VerifierSHPLONK<'_, Bn256>,
-        Challenge255<G1Affine>,
-        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
-        // SingleStrategy<'_, Bn256>,
-        AccumulatorStrategy<'_, Bn256>,
-    >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
-    .unwrap();
-    end_timer!(verify_time);
+    // let strategy = AccumulatorStrategy::new(&params);
+    // let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
+    // let verify_time = start_timer!(|| "verify");
+    // verify_proof::<
+    //     KZGCommitmentScheme<Bn256>,
+    //     VerifierSHPLONK<'_, Bn256>,
+    //     Challenge255<G1Affine>,
+    //     Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
+    //     // SingleStrategy<'_, Bn256>,
+    //     AccumulatorStrategy<'_, Bn256>,
+    // >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
+    // .unwrap();
+    // end_timer!(verify_time);
 
     match var("GEN_AGG_EVM") {
         Ok(gen_agg_evm_file) => {
@@ -424,18 +433,18 @@ pub fn prove<T: Copy>(
             let protocol = compile::<_, _>(
                 &params,
                 pk.get_vk(),
-                Config::kzg().with_num_instance(num_instance),
+                Config::kzg().with_num_instance(num_instance.clone()),
             );
             let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
 
-            let mut public_inputs = vec![];
-            for val in &checkable_pf.instances[0] {
-                let bytes = val.to_repr();
-                let u = U256::from_little_endian(bytes.as_slice());
-                public_inputs.push(u);
-            }
-            let proof = ethers::types::Bytes::from(checkable_pf.proof.to_vec());
-            println!("debug pubInputs: {:?}, proof: {:?}", public_inputs, proof);
+            // let mut public_inputs = vec![];
+            // for val in &checkable_pf.instances[0] {
+            //     let bytes = val.to_repr();
+            //     let u = U256::from_little_endian(bytes.as_slice());
+            //     public_inputs.push(u);
+            // }
+            // let proof = ethers::types::Bytes::from(checkable_pf.proof.to_vec());
+            // println!("debug pubInputs: {:?}, proof: {:?}", public_inputs, proof);
 
             // executor::block_on(verify_proof_via_solidity(
             //     checkable_pf.clone(), PathBuf::from(
@@ -597,7 +606,6 @@ impl<F: ScalarField> Circuit<F> for RangeWithInstanceCircuitBuilder<F> {
         if !witness_gen_only {
             // expose public instances
             let mut layouter = layouter.namespace(|| "expose");
-            println!("debug assigned ins: {:?}", self.assigned_instances);
             for (i, instance) in self.assigned_instances.iter().enumerate() {
                 let cell = instance.cell.unwrap();
                 let (cell, _) = assigned_advices
