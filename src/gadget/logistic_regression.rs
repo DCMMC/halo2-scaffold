@@ -5,7 +5,7 @@ use halo2_base::{
 use log::warn;
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use std::convert::From;
-use halo2_base::QuantumCell::Constant;
+use halo2_base::QuantumCell::{Constant, Existing};
 
 #[derive(Clone, Debug)]
 pub struct LogisticRegressionChip<F: ScalarField> {
@@ -66,22 +66,43 @@ impl<F: ScalarField> LogisticRegressionChip<F> {
 
         let learning_rate = ctx.load_witness(self.chip.quantization(learning_rate / n_sample));
 
+        // h_{\theta}(x) = \frac{1}{1+\exp(-\theta x)}
         let y: Vec<QA> = x.iter().map(|xi| {
-            let xw = self.chip.inner_product(ctx, (*xi).clone(), w.iter().map(|wi| QA::from(*wi)));
-            let yi = self.chip.qadd(ctx, xw, b);
+            let wx = self.chip.inner_product(ctx, w.iter().map(|wi| QA::from(*wi)), (*xi).clone());
+            let logit = self.chip.qadd(ctx, wx, b);
+            let neg_logit = self.chip.neg(ctx, logit);
+            let exp_logit = self.chip.qexp(ctx, neg_logit);
+            let one = Constant(self.chip.quantization(1.0));
+            let exp_logit_p1 = self.chip.qadd(ctx, exp_logit, one);
+            let yi = self.chip.qdiv(ctx, one, exp_logit_p1);
 
             QA::from(yi)
         }).collect();
+        // binary cross-entropy (aka., NLL) for sample i
+        let mut bce_i = vec![];
         let mut diff_y = vec![];
         for (yi, ti) in y.iter().zip(y_truth.iter()) {
             diff_y.push(self.chip.qsub(ctx, *yi, *ti));
+            let ti_deq = match (*ti).into() {
+                Existing(AssignedValue { value, .. }) => {
+                    self.chip.dequantization(value.evaluate())
+                },
+                _ => panic!()
+            };
+            let yi_deq = match (*yi).into() {
+                Existing(AssignedValue { value, .. }) => {
+                    self.chip.dequantization(value.evaluate())
+                },
+                _ => panic!()
+            };
+            if ti_deq == 1.0 {
+                bce_i.push(-yi_deq.ln());
+            } else {
+                bce_i.push(-(1.0 - yi_deq).ln());
+            }
         }
-        let mut loss = 0.;
-        for i in 0..diff_y.len() {
-            loss += self.chip.dequantization(*diff_y[i].value()).powi(2);
-        }
-        // loss = 0.5 * MSE(y, t)
-        loss /= n_sample * 2.0;
+        // loss = BCE(y, t)
+        let loss: f64 = bce_i.iter().sum::<f64>() / n_sample;
         warn!("loss: {:?}", loss);
 
         for j in 0..w.len() {
