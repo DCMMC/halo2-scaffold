@@ -131,65 +131,55 @@ fn main() {
     set_var("LOOKUP_BITS", 15.to_string());
     set_var("DEGREE", 16.to_string());
 
-    // run mock prover
-    // let x0 = vec![
-    //     -0.00188201652779104, -0.044641636506989, -0.0514740612388061, -0.0263278347173518,
-    //     -0.00844872411121698, -0.019163339748222, 0.0744115640787594, -0.0394933828740919,
-    //     -0.0683297436244215, -0.09220404962683];
-    // let x1 = vec![
-    //     -0.123134, -0.129089, -0.0514740612388061, -0.21,
-    //     -0.4353, -0.019163339748222, 0.4242, -0.44,
-    //     -0.2341, -0.231];
-    // mock(
-    //     inference,
-    //     x0.clone()
-    // );
+    let (train, valid) = linfa_datasets::winequality()
+        .map_targets(|x| if *x > 6 { "good" } else { "bad" })
+        .split_with_ratio(0.9);
+    let model = LogisticRegression::default()
+        .max_iterations(150)
+        .fit(&train)
+        .unwrap();
+    let pred = model.predict(&valid);
+    let cm = pred.confusion_matrix(&valid).unwrap();
+    println!("{:?}", cm);
+    println!("accuracy {}, MCC {}", cm.accuracy(), cm.mcc());
 
-    // uncomment below to run actual prover:
-    // the 3rd parameter is a dummy input to provide for the proving key generation
-    // prove(
-    //     inference,
-    //     x0.clone(),
-    //     x1.clone()
-    // );
+    // let dataset = linfa_datasets::diabetes();
+    // let lin_reg = LinearRegression::new();
+    // let model = lin_reg.fit(&dataset).unwrap();
+    // println!("intercept:  {}", model.intercept());
+    // println!("parameters: {}", model.params());
 
-    let dataset = linfa_datasets::diabetes();
-    let lin_reg = LinearRegression::new();
-    let model = lin_reg.fit(&dataset).unwrap();
-    println!("intercept:  {}", model.intercept());
-    println!("parameters: {}", model.params());
+    // let mut train_x: Vec<Vec<f64>> = vec![];
+    // let mut train_y: Vec<f64> = vec![];
+    // for (sample_x, sample_y) in dataset.sample_iter() {
+    //     train_x.push(sample_x.iter().map(|xi| *xi).collect::<Vec<f64>>());
+    //     train_y.push(*sample_y.iter().peekable().next().unwrap());
+    // }
+    // let dim = train_x[0].len();
+    // let mut w = vec![Fr::from(0); dim];
+    // let mut b = Fr::from(0);
+    // let epoch = 20;
+    // let learning_rate = 0.01;
+    // let batch_size: usize = 32;
 
-    let mut train_x: Vec<Vec<f64>> = vec![];
-    let mut train_y: Vec<f64> = vec![];
-    for (sample_x, sample_y) in dataset.sample_iter() {
-        train_x.push(sample_x.iter().map(|xi| *xi).collect::<Vec<f64>>());
-        train_y.push(*sample_y.iter().peekable().next().unwrap());
-    }
-    let dim = train_x[0].len();
-    let mut w = vec![Fr::from(0); dim];
-    let mut b = Fr::from(0);
-    let epoch = 20;
-    let learning_rate = 0.01;
-    let batch_size: usize = 32;
+    // train_native(train_x.clone(), train_y.clone(), learning_rate, epoch, batch_size);
 
-    train_native(train_x.clone(), train_y.clone(), learning_rate, epoch, batch_size);
-
-    let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
-    let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
-    let (pk, break_points) = gen_key(train, dummy_inputs);
-    for idx_epoch in 0..epoch {
-        warn!("Epoch {:?}", idx_epoch + 1);
-        for idx_batch in 0..n_batch {
-            let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
-            let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
-            let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
-            let out = prove_private(train, private_inputs, &pk, break_points.clone());
-            // out = mock(train, private_inputs);
-            w = (&out[..dim]).iter().map(|wi| (*wi).clone()).collect();
-            b = out[dim];
-        }
-    }
-    println!("w: {:?}, b: {:?}", w, b);
+    // let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
+    // let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
+    // let (pk, break_points) = gen_key(train, dummy_inputs);
+    // for idx_epoch in 0..epoch {
+    //     warn!("Epoch {:?}", idx_epoch + 1);
+    //     for idx_batch in 0..n_batch {
+    //         let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
+    //         let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
+    //         let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
+    //         let out = prove_private(train, private_inputs, &pk, break_points.clone());
+    //         // out = mock(train, private_inputs);
+    //         w = (&out[..dim]).iter().map(|wi| (*wi).clone()).collect();
+    //         b = out[dim];
+    //     }
+    // }
+    // println!("w: {:?}, b: {:?}", w, b);
 
     // mock(train, (w, b, train_x, train_y));
     // prove(train, x0.clone(), x1.clone());
