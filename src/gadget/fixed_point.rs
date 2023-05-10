@@ -567,20 +567,6 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         let ab = self.gate().mul(ctx, a, b);
         let (res, _) = self.signed_div_scale(ctx, ab);
 
-        // note that a, b < 2^{2p}, so ab < 2^{4p}, if the num_bits is less than this, the div_mod()
-        // will leads to constraint not satisfied with outside any region
-        // let num_bits = PRECISION_BITS as usize * 4;
-        // let a_sign = self.is_neg(ctx, a);
-        // let b_sign = self.is_neg(ctx, b);
-        // let a_abs = self.qabs(ctx, a);
-        // let b_abs = self.qabs(ctx, b);
-        // let ab_abs = self.gate().mul(ctx, a_abs, b_abs);
-        // let ab_sign = self.bit_xor(ctx, a_sign, b_sign);
-        // let (ab_rescale, _) = self.range_gate().div_mod(
-        //     ctx, ab_abs, self.quantization_scale.get_lower_128(), num_bits
-        // );
-        // let res = self.cond_neg(ctx, ab_rescale, ab_sign);
-
         res
     }
 
