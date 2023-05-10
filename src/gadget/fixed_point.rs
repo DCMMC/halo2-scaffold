@@ -500,15 +500,9 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
     {
         let a = a.into();
         let a_num_bits = 254;
-        // a >> 252 to check wether a is negative numbers, because negative numbers > 2^254-2^127 > 2^253
-        // but if we want to right shift 252, we need to div_mod twice which is cost
-        // in here I only right shift once with a >> 236, so this will leads to signed_div_scale failed with
-        // precision > 59
-        let (a_shift0, _) = self.range_gate().div_mod(
-            ctx, a, BigUint::from(2u32).pow((236u32) as u32), a_num_bits);
-        // let (a_shift1, _) = self.range_gate().div_mod(
-        //     ctx, a_shift0, BigUint::from(2u32).pow((127u32) as u32), a_num_bits);
-        let is_pos = self.gate().is_zero(ctx, a_shift0);
+        let (a_shift, _) = self.range_gate().div_mod(
+            ctx, a, BigUint::from(2u32).pow((PRECISION_BITS * 2 + 1)as u32), a_num_bits);
+        let is_pos = self.gate().is_zero(ctx, a_shift);
         let is_neg = self.gate().not(ctx, is_pos);
 
         is_neg
@@ -1006,8 +1000,9 @@ impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PREC
         let a = a.into();
         // b = 2^p
         let b = fe_to_biguint(&self.quantization_scale);
-        let a_is_neg = self.is_neg(ctx, a);
-        let (q, r) = if a_is_neg.value().get_lower_32() == 1u32 {
+        // 2^254-2^252 > 2^252
+        let a_is_neg = fe_to_biguint(a.value()) > BigUint::from(2u32).pow(252u32);
+        let (q, r) = if a_is_neg {
             let a_abs = fe_to_biguint(&(self.bn254_max - a.value() + F::one()));
             let q = fe_to_biguint(&self.bn254_max) - a_abs.div_ceil(&b) + BigUint::from(1u32);
             let r = fe_to_biguint::<F>(a.value()) - fe_to_biguint::<F>(
