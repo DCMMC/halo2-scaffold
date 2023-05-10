@@ -23,6 +23,7 @@ linfa-datasets = { version = "0.6", features = ["diabetes", "winequality"] }
 linfa-linear = "0.6"
 ndarray = { version = "0.15", features = ["approx"] }
 num-bigint = "0.4"
+num-integer = "0.1"
 bitvec = "1"
 
 log = "0.4"

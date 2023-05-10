@@ -1,11 +1,11 @@
 use std::{ops::Sub, fmt::Debug};
-
 use halo2_base::{
-    utils::{ScalarField, BigPrimeField}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
+    utils::{ScalarField, BigPrimeField, biguint_to_fe, fe_to_biguint}, gates::{GateChip, GateInstructions, RangeChip, range::RangeStrategy, RangeInstructions},
     QuantumCell, Context, AssignedValue
 };
 use halo2_base::QuantumCell::{Constant, Existing, Witness};
 use num_bigint::{BigUint};
+use num_integer::Integer;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FixedPointStrategy {
@@ -16,7 +16,7 @@ pub enum FixedPointStrategy {
 /// For example, `PRECISION_BITS = 32` indicates this chip implements 32.32 fixed point decimal arithmetics.
 /// The valid range of the fixed point decimal is -max_value < x < max_value.
 #[derive(Clone, Debug)]
-pub struct FixedPointChip<F: ScalarField, const PRECISION_BITS: u32> {
+pub struct FixedPointChip<F: BigPrimeField, const PRECISION_BITS: u32> {
     strategy: FixedPointStrategy,
     pub gate: RangeChip<F>,
     pub quantization_scale: F,
@@ -24,25 +24,10 @@ pub struct FixedPointChip<F: ScalarField, const PRECISION_BITS: u32> {
     pub bn254_max: F,
     pub negative_point: F,
     pub lookup_bits: usize,
+    pub pow_of_two: Vec<F>
 }
 
-pub fn u128_to_scalar<F: ScalarField>(x: u128) -> F {
-    let x_biguint = BigUint::from(x);
-    biguint_to_scalar(x_biguint)
-}
-
-pub fn biguint_to_scalar<F: ScalarField>(x: BigUint) -> F {
-    let x_biguint = x.to_bytes_le();
-    let mut x_bytes_le = [0u8; 64];
-    for (idx, val) in x_biguint.iter().enumerate() {
-        x_bytes_le[idx] = *val;
-    }
-    let x_f = F::from_bytes_wide(&x_bytes_le);
-
-    x_f
-}
-
-impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS> {
+impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS> {
     pub fn new(strategy: FixedPointStrategy, lookup_bits: usize) -> Self {
         assert!(PRECISION_BITS <= 63, "support only precision bits <= 63");
         assert!(PRECISION_BITS >= 32, "support only precision bits >= 32");
@@ -56,17 +41,25 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointChip<F, PRECISION_BITS
         // to reduce lots of computations.
         // Quantization: x_q = xS where S is `quantization_scale`
         // De-quantization: x = x_q / S
-        let quantization_scale = u128_to_scalar(2u128.pow(PRECISION_BITS as u32));
+        let quantization_scale = F::from_u128(2u128.pow(PRECISION_BITS as u32));
         // Becuase BN254 is cyclic, negative number will be denoted as (-x) % m = m - x where m = 2^254,
         // in this chip, we treat all x > negative_point as a negative numbers.
-        let bn254_max = biguint_to_scalar(BigUint::parse_bytes(
+        let bn254_max = biguint_to_fe(&BigUint::parse_bytes(
             &F::MODULUS[2..].bytes().collect::<Vec<u8>>(), 16).unwrap().sub(1u32));
         // -max_value % m = negative_point
-        let negative_point = bn254_max - u128_to_scalar::<F>(2u128.pow(PRECISION_BITS * 2 + 1)) + F::one();
+        let negative_point = bn254_max - F::from_u128(2u128.pow(PRECISION_BITS * 2 + 1)) + F::one();
         // min_value < x < max_value
         let max_value = BigUint::from(2u32).pow(PRECISION_BITS * 2);
 
-        Self { strategy, gate, quantization_scale, max_value, bn254_max, negative_point, lookup_bits }
+        let mut pow_of_two = Vec::with_capacity(F::NUM_BITS as usize);
+        let two = F::from(2);
+        pow_of_two.push(F::one());
+        pow_of_two.push(two);
+        for _ in 2..F::NUM_BITS {
+            pow_of_two.push(two * pow_of_two.last().unwrap());
+        }
+
+        Self { strategy, gate, quantization_scale, max_value, bn254_max, negative_point, lookup_bits, pow_of_two }
     }
 
     pub fn default(lookup_bits: usize) -> Self {
@@ -182,7 +175,7 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
         F: BigPrimeField;
 
     fn cond_neg(
-        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, is_neg: impl Into<QuantumCell<F>>
+        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, is_neg: AssignedValue<F> 
     ) -> AssignedValue<F>
     where 
         F: BigPrimeField;
@@ -441,9 +434,15 @@ pub trait FixedPointInstructions<F: ScalarField, const PRECISION_BITS: u32> {
     ) -> AssignedValue<F>
     where 
         F: BigPrimeField;
+
+    fn signed_div_scale(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> (AssignedValue<F>, AssignedValue<F>);
 }
 
-impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECISION_BITS> for FixedPointChip<F, PRECISION_BITS> {
+impl<F: BigPrimeField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECISION_BITS> for FixedPointChip<F, PRECISION_BITS> {
     type Gate = GateChip<F>;
     type RangeGate = RangeChip<F>;
 
@@ -501,25 +500,30 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
     {
         let a = a.into();
         let a_num_bits = 254;
-        let (a_shift, _) = self.range_gate().div_mod(
-            ctx, a, BigUint::from(2u32).pow((PRECISION_BITS * 2 + 1)as u32), a_num_bits);
-        let is_pos = self.gate().is_zero(ctx, a_shift);
+        // a >> 252 to check wether a is negative numbers, because negative numbers > 2^254-2^127 > 2^253
+        // but if we want to right shift 252, we need to div_mod twice which is cost
+        // in here I only right shift once with a >> 236, so this will leads to signed_div_scale failed with
+        // precision > 59
+        let (a_shift0, _) = self.range_gate().div_mod(
+            ctx, a, BigUint::from(2u32).pow((236u32) as u32), a_num_bits);
+        // let (a_shift1, _) = self.range_gate().div_mod(
+        //     ctx, a_shift0, BigUint::from(2u32).pow((127u32) as u32), a_num_bits);
+        let is_pos = self.gate().is_zero(ctx, a_shift0);
         let is_neg = self.gate().not(ctx, is_pos);
 
         is_neg
     }
 
     fn cond_neg(
-        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, is_neg: impl Into<QuantumCell<F>>
+        &self, ctx: &mut Context<F>, a: impl Into<QuantumCell<F>>, is_neg: AssignedValue<F> 
     ) -> AssignedValue<F>
     where 
         F: BigPrimeField
     {
         let a = a.into();
         let neg_a = self.gate().neg(ctx, a);
-        let is_neg_assigned = self.gate().add(ctx, is_neg, Constant(F::zero()));
         // self.gate().assert_bit(ctx, is_neg_assigned);
-        let res = self.gate().select(ctx, neg_a, a, is_neg_assigned);
+        let res = self.gate().select(ctx, neg_a, a, is_neg);
 
         res
     }
@@ -565,19 +569,23 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
     {
         let a = a.into();
         let b = b.into();
+
+        let ab = self.gate().mul(ctx, a, b);
+        let (res, _) = self.signed_div_scale(ctx, ab);
+
         // note that a, b < 2^{2p}, so ab < 2^{4p}, if the num_bits is less than this, the div_mod()
         // will leads to constraint not satisfied with outside any region
-        let num_bits = PRECISION_BITS as usize * 4;
-        let a_sign = self.is_neg(ctx, a);
-        let b_sign = self.is_neg(ctx, b);
-        let a_abs = self.qabs(ctx, a);
-        let b_abs = self.qabs(ctx, b);
-        let ab_abs = self.gate().mul(ctx, a_abs, b_abs);
-        let ab_sign = self.bit_xor(ctx, a_sign, b_sign);
-        let (ab_rescale, _) = self.range_gate().div_mod(
-            ctx, ab_abs, self.quantization_scale.get_lower_128(), num_bits
-        );
-        let res = self.cond_neg(ctx, ab_rescale, ab_sign);
+        // let num_bits = PRECISION_BITS as usize * 4;
+        // let a_sign = self.is_neg(ctx, a);
+        // let b_sign = self.is_neg(ctx, b);
+        // let a_abs = self.qabs(ctx, a);
+        // let b_abs = self.qabs(ctx, b);
+        // let ab_abs = self.gate().mul(ctx, a_abs, b_abs);
+        // let ab_sign = self.bit_xor(ctx, a_sign, b_sign);
+        // let (ab_rescale, _) = self.range_gate().div_mod(
+        //     ctx, ab_abs, self.quantization_scale.get_lower_128(), num_bits
+        // );
+        // let res = self.cond_neg(ctx, ab_rescale, ab_sign);
 
         res
     }
@@ -703,15 +711,14 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
         let (int_part, frac_part) = self.range_gate().div_mod(
             ctx, Existing(a_abs), shift, num_bits);
         // int_part must be small as large number leads to overflow.
-        let int_part_pow2 = self.gate().pow_of_two()[int_part.value().get_lower_32() as usize];
-        // to make use of int_part_pow2 as a Witness, we must first check it's a correct pow2 of int_part.
-        let int_part_pow2_witness = self.gate().add(ctx, Witness(int_part_pow2), Constant(F::zero()));
-        self.check_power_of_two(ctx, int_part_pow2_witness, int_part);
+        let pow_of_two: Vec<QuantumCell<F>> = self.pow_of_two.iter().map(|x| Constant(*x)).collect();
+        let int_part_pow2 = self.gate().select_from_idx(
+            ctx, pow_of_two, int_part);
         let coef = self.generate_exp2_poly();
         let y_frac = self.polynomial(ctx, frac_part, coef);
-        let res_pos = self.gate().mul(ctx, Existing(int_part_pow2_witness), Existing(y_frac));
+        let res_pos = self.gate().mul(ctx, Existing(int_part_pow2), Existing(y_frac));
 
-        let one = Constant(u128_to_scalar(shift));
+        let one = Constant(F::from_u128(shift));
         let res_neg = self.qdiv(ctx, one, res_pos);
         let is_neg = self.is_neg(ctx, a);
         let res = self.gate().select(ctx, res_neg, res_pos, is_neg);
@@ -987,5 +994,42 @@ impl<F: ScalarField, const PRECISION_BITS: u32> FixedPointInstructions<F, PRECIS
     {
         let half = ctx.load_constant(self.quantization(0.5));
         self.qpow(ctx, x, half)
+    }
+
+    fn signed_div_scale(
+        &self,
+        ctx: &mut Context<F>,
+        a: impl Into<QuantumCell<F>>
+    ) -> (AssignedValue<F>, AssignedValue<F>)
+    {
+        // a = b * q + r, r in [0, b), q in [-2^n, 2^n]
+        let a = a.into();
+        // b = 2^p
+        let b = fe_to_biguint(&self.quantization_scale);
+        let a_is_neg = self.is_neg(ctx, a);
+        let (q, r) = if a_is_neg.value().get_lower_32() == 1u32 {
+            let a_abs = fe_to_biguint(&(self.bn254_max - a.value() + F::one()));
+            let q = fe_to_biguint(&self.bn254_max) - a_abs.div_ceil(&b) + BigUint::from(1u32);
+            let r = fe_to_biguint::<F>(a.value()) - fe_to_biguint::<F>(
+                &(biguint_to_fe::<F>(&b.clone()) * biguint_to_fe::<F>(&q.clone())));
+            // assert!(*a.value() == biguint_to_fe::<F>(&b) * biguint_to_fe::<F>(&q) + biguint_to_fe::<F>(&r));
+            (q, r)
+        } else {
+            fe_to_biguint(a.value()).div_mod_floor(&b)
+        };
+        ctx.assign_region(
+            [Witness(biguint_to_fe(&r)), Constant(biguint_to_fe(&b)), Witness(biguint_to_fe(&q)), a],
+            [0]
+        );
+        let rem = ctx.get(-4);
+        let div = ctx.get(-2);
+
+        self.range_gate().check_big_less_than_safe(ctx, rem, b);
+        // a < 2^{4p}, b = 2^p, so |q| < 2^{3p}
+        let bound = BigUint::from(2u32).pow(PRECISION_BITS * 3 as u32);
+        let div_abs = self.qabs(ctx, div);
+        self.range_gate().check_big_less_than_safe(ctx, div_abs, bound);
+
+        (div, rem)
     }
 }

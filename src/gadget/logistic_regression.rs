@@ -1,5 +1,5 @@
 use halo2_base::{
-    utils::{ScalarField, BigPrimeField},
+    utils::BigPrimeField,
     QuantumCell, Context, AssignedValue
 };
 use log::warn;
@@ -8,12 +8,12 @@ use std::convert::From;
 use halo2_base::QuantumCell::{Constant, Existing};
 
 #[derive(Clone, Debug)]
-pub struct LogisticRegressionChip<F: ScalarField> {
+pub struct LogisticRegressionChip<F: BigPrimeField> {
     pub chip: FixedPointChip<F, 63>,
     pub lookup_bits: usize,
 }
 
-impl<F: ScalarField> LogisticRegressionChip<F> {
+impl<F: BigPrimeField> LogisticRegressionChip<F> {
     pub fn new(lookup_bits: usize) -> Self {
         let chip = FixedPointChip::<F, 63>::default(lookup_bits);
 
