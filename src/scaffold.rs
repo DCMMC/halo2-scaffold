@@ -3,16 +3,11 @@
 //! We recommend not reading this module on first (or second) pass.
 use ark_std::{end_timer, start_timer};
 use log::{debug, trace};
-use std::{error::Error as RawError, io::{Read, BufReader, BufRead, Write}};
-// use thiserror::Error;
-use ezkl_lib::{pfsys::{Snark, evm::{aggregation::{AggregationCircuit, PoseidonTranscript, AggregationError}, EvmVerificationError}, create_keys}, execute::create_proof_circuit_kzg, eth::{fix_verifier_sol, verify_proof_via_solidity}};
-use halo2_proofs::{poly::{kzg::{multiopen::ProverGWC, strategy::AccumulatorStrategy, commitment::ParamsKZG}, commitment::ParamsProver}, plonk::VerifyingKey, halo2curves::bn256::Fq};
+use std::{error::Error as RawError, io::{Read, Write}};
+use ezkl_lib::{pfsys::{Snark, evm::{aggregation::AggregationError, EvmVerificationError}}};
+use halo2_proofs::{poly::{kzg::{multiopen::ProverGWC, commitment::ParamsKZG}, commitment::ParamsProver}, plonk::VerifyingKey, halo2curves::bn256::Fq};
 use serde::{Deserialize, Serialize};
-use snark_verifier::{system::halo2::{compile, Config, transcript::evm::EvmTranscript}, loader::{native::NativeLoader, evm::{EvmLoader, compile_yul, encode_calldata, ExecutorBuilder, Address, U256}}, verifier::{plonk::{PlonkVerifier, PlonkProof}, SnarkVerifier}, pcs::kzg::{KzgDecidingKey, KzgAs, Gwc19, LimbsEncoding}};
-// use snark_verifier_sdk::halo2::aggregation::PublicAggregationCircuit;
-// use futures::executor;
-// use ethers::abi::ethabi::Bytes;
-use std::fmt::Write as FmtWrite;
+use snark_verifier::{system::halo2::{compile, Config, transcript::evm::EvmTranscript}, loader::evm::{EvmLoader, compile_yul, encode_calldata, ExecutorBuilder, Address}, verifier::{plonk::{PlonkVerifier, PlonkProof}, SnarkVerifier}, pcs::kzg::{KzgDecidingKey, KzgAs, Gwc19, LimbsEncoding}};
 
 use halo2_base::{
     gates::{
@@ -25,16 +20,15 @@ use halo2_base::{
         dev::MockProver,
         halo2curves::bn256::{Bn256, Fr, G1Affine},
         plonk::{
-            create_proof, keygen_pk, keygen_vk, verify_proof, Circuit, Column, ConstraintSystem,
+            create_proof, keygen_pk, keygen_vk, Circuit, Column, ConstraintSystem,
             Error, Instance,
         },
         poly::kzg::{
             commitment::KZGCommitmentScheme,
-            multiopen::{ProverSHPLONK, VerifierSHPLONK},
-            // strategy::SingleStrategy,
+            multiopen::{ProverSHPLONK},
         },
         transcript::{
-            Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
+            Blake2bWrite, Challenge255, TranscriptWriterBuffer,
         },
     },
     utils::{fs::gen_srs, ScalarField},
@@ -233,7 +227,7 @@ pub fn prove<T: Copy>(
     f: impl Fn(&mut Context<Fr>, T, &mut Vec<AssignedValue<Fr>>),
     private_inputs: T,
     dummy_inputs: T,
-) {
+) -> Vec<u8> {
     let k = var("DEGREE").unwrap_or_else(|_| "18".to_string()).parse().unwrap();
     // we use env var `LOOKUP_BITS` to determine whether to use `GateThreadBuilder` or `RangeCircuitBuilder`. The difference is that the latter creates a lookup table with 2^LOOKUP_BITS rows, while the former does not.
     let lookup_bits: Option<usize> = var("LOOKUP_BITS")
@@ -266,12 +260,8 @@ pub fn prove<T: Copy>(
             assigned_instances,
         };
 
-        let vk_time = start_timer!(|| "Generating verifying key");
         vk = keygen_vk(&params, &circuit).expect("vk generation failed");
-        end_timer!(vk_time);
-        let pk_time = start_timer!(|| "Generating proving key");
         pk = keygen_pk(&params, vk, &circuit).expect("pk generation failed");
-        end_timer!(pk_time);
         // The MAIN DIFFERENCE in this setup is that after pk generation, the shape of the circuit is set in stone. We should not auto-configure the circuit anymore. Instead, we get the circuit shape and store it:
         break_points = circuit.circuit.0.break_points.take();
     } else {
@@ -280,26 +270,18 @@ pub fn prove<T: Copy>(
             assigned_instances,
         };
 
-        let vk_time = start_timer!(|| "Generating verifying key");
         vk = keygen_vk(&params, &circuit).expect("vk generation failed");
-        end_timer!(vk_time);
-        let pk_time = start_timer!(|| "Generating proving key");
         pk = keygen_pk(&params, vk, &circuit).expect("pk generation failed");
-        end_timer!(pk_time);
         // The MAIN DIFFERENCE in this setup is that after pk generation, the shape of the circuit is set in stone. We should not auto-configure the circuit anymore. Instead, we get the circuit shape and store it:
         break_points = circuit.circuit.break_points.take();
     }
 
-    let pf_time = start_timer!(|| "Creating KZG proof using SHPLONK multi-open scheme");
     // we time creation of the builder because this is the witness generation stage and can only
     // be done after the private inputs are known
     let mut builder = GateThreadBuilder::prover();
     let mut assigned_instances = vec![];
     f(builder.main(0), private_inputs.clone(), &mut assigned_instances);
     let public_io: Vec<Fr> = assigned_instances.iter().map(|v| *v.value()).collect();
-    debug!("public_io: {:?}", public_io);
-    let num_instance = vec![public_io.len()]; 
-    let assigned_instances_copy = assigned_instances.clone();
     // once again, we have a pre-determined way to break up the builder "threads" into an optimal
     // circuit shape, so we create the prover circuit from this information (`break_points`)
     let proof = if lookup_bits.is_some() {
@@ -307,23 +289,19 @@ pub fn prove<T: Copy>(
             circuit: RangeCircuitBuilder::prover(builder, break_points.clone()),
             assigned_instances,
         };
-        // let mut transcript = Blake2bWrite::<_, _, Challenge255<_>>::init(vec![]);
         let mut transcript = TranscriptWriterBuffer::<_, _, _>::init(vec![]);
         create_proof::<
             KZGCommitmentScheme<Bn256>,
-            // ProverSHPLONK<'_, Bn256>,
             ProverGWC<_>,
-            // Challenge255<G1Affine>,
             _,
             _,
-            // Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
-            // PoseidonTranscript<NativeLoader, _>,
             EvmTranscript<G1Affine, _, _, _>,
             _,
         >(&params, &pk, &[circuit], &[&[&public_io]], OsRng, &mut transcript)
         .expect("proof generation failed");
         let proof = transcript.finalize();
 
+        /*
         let yul_path = "params/zk_range_proof.yul".to_string();
         let deployment_code = gen_aggregation_evm_verifier(
             &params,
@@ -343,23 +321,6 @@ pub fn prove<T: Copy>(
                 "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
             ).collect::<Vec<String>>().join("\n");
         let code = DeploymentCode { code: compile_yul(&yul_code) };
-        // assigned_instances = vec![];
-        // let mut new_builder = GateThreadBuilder::prover();
-        // f(new_builder.main(0), private_inputs.clone(), &mut assigned_instances);
-        // println!("##### debug 11111 {:?}", new_builder.witness_gen_only());
-        // let circuit_new = RangeWithInstanceCircuitBuilder {
-        //     circuit: RangeCircuitBuilder::prover(new_builder, break_points.clone()),
-        //     assigned_instances,
-        // };
-        // let snark_proof = create_proof_circuit_kzg(
-        //     circuit_new,
-        //     &params,
-        //     vec![public_io.clone()],
-        //     &pk,
-        //     ezkl_lib::commands::TranscriptType::EVM,
-        //     AccumulatorStrategy::new(&params),
-        //     ezkl_lib::circuit::base::CheckMode::SAFE,
-        // ).unwrap();
         let protocol = compile::<_, _>(
             &params,
             pk.get_vk(),
@@ -369,12 +330,13 @@ pub fn prove<T: Copy>(
             assigned_ins_vec.push(assigned_instances_copy.clone().into_iter().map(|x| *x.value()).collect());
         let snark_proof = Snark::new(protocol, assigned_ins_vec.clone(), proof.clone());
         evm_verify(code, snark_proof.clone()).unwrap();
-        // println!("calldata of original proof: {:?}", encode_calldata(&snark_proof.instances, &snark_proof.proof));
 
-        // let output = fix_verifier_sol(yul_path.into()).unwrap();
-        // let sol_path = PathBuf::from("params/zk_range_proof.sol");
-        // let mut f = File::create(sol_path).unwrap();
-        // let _ = f.write(output.as_bytes());
+        println!("calldata of original proof: {:?}", encode_calldata(&snark_proof.instances, &snark_proof.proof));
+        let output = fix_verifier_sol(yul_path.into()).unwrap();
+        let sol_path = PathBuf::from("params/zk_range_proof.sol");
+        let mut f = File::create(sol_path).unwrap();
+        let _ = f.write(output.as_bytes());
+        */
 
         proof
     } else {
@@ -394,110 +356,10 @@ pub fn prove<T: Copy>(
         .expect("proof generation failed");
         let proof = transcript.finalize();
 
-        let path = "params/zk_range_proof.yul".to_string();
-        let deployment_code = gen_aggregation_evm_verifier(
-            &params,
-            &pk.get_vk(),
-            num_instance.clone(),
-            vec![],
-            path
-        ).unwrap();
-        let deployment_code_path = PathBuf::from("params/zk_range_proof.code".to_string());
-        deployment_code.save(&deployment_code_path).unwrap();
-
         proof
     };
-    end_timer!(pf_time);
 
-    // let strategy = SingleStrategy::new(&params);
-    // let strategy = AccumulatorStrategy::new(&params);
-    // let mut transcript = Blake2bRead::<_, _, Challenge255<_>>::init(&proof[..]);
-    // let verify_time = start_timer!(|| "verify");
-    // verify_proof::<
-    //     KZGCommitmentScheme<Bn256>,
-    //     VerifierSHPLONK<'_, Bn256>,
-    //     Challenge255<G1Affine>,
-    //     Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
-    //     // SingleStrategy<'_, Bn256>,
-    //     AccumulatorStrategy<'_, Bn256>,
-    // >(&params, pk.get_vk(), strategy, &[&[&public_io]], &mut transcript)
-    // .unwrap();
-    // end_timer!(verify_time);
-
-    match var("GEN_AGG_EVM") {
-        Ok(gen_agg_evm_file) => {
-            let agg_time = start_timer!(|| "Generating EVM agg proof verifier");
-            let agg_params = gen_srs(20u32);
-            let mut assigned_ins_vec = Vec::new();
-            assigned_ins_vec.push(assigned_instances_copy.into_iter().map(|x| *x.value()).collect());
-            let protocol = compile::<_, _>(
-                &params,
-                pk.get_vk(),
-                Config::kzg().with_num_instance(num_instance.clone()),
-            );
-            let checkable_pf = Snark::new(protocol, assigned_ins_vec, proof.clone());
-
-            // let mut public_inputs = vec![];
-            // for val in &checkable_pf.instances[0] {
-            //     let bytes = val.to_repr();
-            //     let u = U256::from_little_endian(bytes.as_slice());
-            //     public_inputs.push(u);
-            // }
-            // let proof = ethers::types::Bytes::from(checkable_pf.proof.to_vec());
-            // println!("debug pubInputs: {:?}, proof: {:?}", public_inputs, proof);
-
-            // executor::block_on(verify_proof_via_solidity(
-            //     checkable_pf.clone(), PathBuf::from(
-            //         "params/zk_range_proof.sol")
-            // )).unwrap();
-
-            let mut snarks = Vec::new();
-            snarks.push(checkable_pf);
-            let agg_circuit = AggregationCircuit::new(&params, snarks).unwrap();
-            let agg_pk = create_keys::<KZGCommitmentScheme<Bn256>, Fr, AggregationCircuit>(
-                &agg_circuit,
-                &agg_params,
-            ).unwrap();
-           
-            let agg_vk = agg_pk.get_vk();
-            let yul_path = var("GEN_AGG_EVM").unwrap() + ".yul";
-            let deployment_code = gen_aggregation_evm_verifier(
-                &agg_params,
-                &agg_vk,
-                agg_circuit.num_instance(),
-                AggregationCircuit::accumulator_indices(),
-                yul_path.clone()
-            ).unwrap();
-            let deployment_code_path = PathBuf::from(gen_agg_evm_file.clone());
-            deployment_code.save(&deployment_code_path).unwrap();
-            let agg_proof_path = PathBuf::from(gen_agg_evm_file.clone() + ".pf");
-            end_timer!(agg_time);
-
-            let evm_verify_time = start_timer!(|| "Verify proof on-chain");
-            let snark_proof = create_proof_circuit_kzg(
-                agg_circuit.clone(),
-                &agg_params,
-                agg_circuit.instances(),
-                &agg_pk,
-                ezkl_lib::commands::TranscriptType::EVM,
-                AccumulatorStrategy::new(&agg_params),
-                ezkl_lib::circuit::base::CheckMode::SAFE,
-            ).unwrap();
-            snark_proof.save(&agg_proof_path).unwrap();
-            let file = File::open(yul_path.clone()).unwrap();
-            let reader = BufReader::new(file);
-            let yul_code = reader.lines().map(|line| line.unwrap().replace(
-                "staticcall(gas(), 0x6", "staticcall(500, 0x6").replace(
-                    "staticcall(gas(), 0x7", "staticcall(40000, 0x7")
-            ).collect::<Vec<String>>().join("\n");
-            let code = DeploymentCode { code: compile_yul(&yul_code) };
-            evm_verify(code, snark_proof.clone()).unwrap();
-            end_timer!(evm_verify_time);
-        },
-        _ => ()
-    }
-
-    println!("Congratulations! Your ZK proof is valid!");
+    proof
 }
 
 #[derive(Clone, Debug)]
