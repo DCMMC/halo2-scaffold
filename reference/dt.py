@@ -1,3 +1,5 @@
+from itertools import chain
+
 # Split a dataset based on an attribute and an attribute value
 def test_split(index, value, dataset):
 	left, right = list(), list()
@@ -85,6 +87,40 @@ def print_tree(node, depth=0):
 	else:
 		print('%s[%s]' % ((depth*' ', node)))
 
+def layers(root):
+    queue = []
+    result = []
+    cnt = 0
+    # If the root is not null, add it to the queue
+    if root:
+        queue.append(root)
+    # While the queue is not empty, repeat steps 4-7
+    while queue:
+        # Get the size of the queue and initialize an empty list to store the nodes of the current level
+        size = len(queue)
+        level = []
+        # Loop through the elements of the current level and add them to the list
+        for i in range(size):
+            node = queue.pop(0)
+            print(node)
+            if isinstance(node, int):
+                print("yes")
+                node = {'left': None, 'right': None, 'cls': node, 'index': cnt}
+            else:
+                node['index'] = cnt
+            cnt += 1
+            level.append(node)
+            # For each element of the current level, add its children to the queue
+            if node['left']:
+                queue.append(node['left'])
+            if node['right']:
+                queue.append(node['right'])
+
+
+        # Add the current level list to the result list
+        result.append(level)
+    return result
+
 # Make a prediction with a decision tree
 def predict(node, row):
 	if row[node['index']] < node['value']:
@@ -108,8 +144,10 @@ dataset = [[2.771244718,1.784783929,0],
 	[7.444542326,0.476683375,1],
 	[10.12493903,3.234550982,1],
 	[6.642287351,3.319983761,1]]
-tree = build_tree(dataset, 3, 1)
+tree = build_tree(dataset, 2, 1)
 print_tree(tree)
+# print([i for i in chain.from_iterable(layers(tree))])
+# print([[i['index'], i['value'], i['left']['index'], i['right']['index'], -1] if 'value' in i else [i['index'], 0, i['index'], i['index'], i['cls']] for i in chain.from_iterable(layers(tree))])
 for row in dataset:
     prediction = predict(tree, row)
     print('Expected=%d, Got=%d' % (row[-1], prediction))
