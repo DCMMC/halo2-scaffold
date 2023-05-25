@@ -1,6 +1,6 @@
 use halo2_base::{
     utils::BigPrimeField,
-    QuantumCell, Context, AssignedValue, gates::{GateInstructions, RangeInstructions}
+    Context, AssignedValue, gates::GateInstructions
 };
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_base::QuantumCell::Constant;
@@ -39,6 +39,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 ctx, tree.iter().cloned().map(Constant), data_slot_idx
             );
             let mut x_copy = vec![];
+            // should I add some equality constraints on these copies?
             for i in 0..x.len() {
                 x_copy.push(ctx.load_witness(x[i]));
             }

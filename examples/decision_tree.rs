@@ -1,18 +1,10 @@
-use halo2_base::halo2_proofs::halo2curves::bn256::Fr;
 use halo2_base::utils::{ScalarField, BigPrimeField};
 use halo2_base::AssignedValue;
 use halo2_base::Context;
 use halo2_scaffold::gadget::decision_tree::DecisionTreeChip;
-use halo2_scaffold::scaffold::{gen_key, prove_private};
 #[allow(unused_imports)]
 use halo2_scaffold::scaffold::{mock, prove};
-use log::warn;
-use std::cmp::min;
 use std::env::{var, set_var};
-use linfa::prelude::*;
-use linfa_linear::LinearRegression;
-use ndarray::{Array, Axis};
-use halo2_base::QuantumCell::{Constant, Existing, Witness};
 
 pub fn inference<F: ScalarField>(
     ctx: &mut Context<F>,
@@ -37,13 +29,13 @@ pub fn inference<F: ScalarField>(
         chip.chip.quantization(1.3),
         F::from(1),
         F::from(2),
-        F::from(3),
+        F::from(255), // padding cls
         // node 1
         F::from(1),
         chip.chip.quantization(-3.5),
         F::from(3),
         F::from(4),
-        F::from(3),
+        F::from(255),
         // node 2
         F::from(0),
         F::from(0),
