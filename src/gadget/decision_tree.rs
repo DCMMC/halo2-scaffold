@@ -2,7 +2,6 @@ use halo2_base::{
     utils::{BigPrimeField, fe_to_biguint},
     Context, AssignedValue, gates::{GateInstructions, RangeInstructions}, QuantumCell
 };
-use num_bigint::BigUint;
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_base::QuantumCell::Constant;
 
@@ -127,9 +126,9 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         for cls_i in 0..num_class {
             cls_adv.push(ctx.load_constant(F::from(cls_i as u64)));
         }
-        let mut cnt = 0;
+        let mut cnt = ctx.load_zero();
         for ((x_ij, y_i), mask_i) in targets {
-            cnt += 1;
+            cnt = self.chip.gate().add(ctx, cnt, mask_i);
             let diff = self.chip.qsub(ctx, x_ij, split);
             let is_less = self.chip.is_neg(ctx, diff);
             let mask_i_copy = self.copy_elem(ctx, &mask_i);
@@ -147,11 +146,17 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 proportion_cls_grp2[cls_i] = self.chip.gate().add(ctx, proportion_cls_grp2[cls_i], is_cls_i_grp2);
             }
         }
-        let num_samples = BigUint::from(cnt as u64);
+        // if cnt is zero, change it to one to avoid dividing zero
+        let cnt_zero = self.chip.gate().is_zero(ctx, cnt);
+        cnt = self.chip.gate().select(ctx, one, cnt, cnt_zero);
+        let num_samples = self.copy_elem(ctx, &cnt);
         let num_bits = (2 * PRECISION_BITS + 1) as usize;
         let scale = QuantumCell::Constant(self.chip.quantization_scale);
         num_group1 = self.chip.gate().mul(ctx, num_group1, scale);
+        // add a small epsilon, avoid for dividing zero
+        num_group1 = self.chip.gate().add(ctx, num_group1, one);
         num_group2 = self.chip.gate().mul(ctx, num_group2, scale);
+        num_group2 = self.chip.gate().add(ctx, num_group2, one);
         let mut gini_grp1 = ctx.load_constant(self.chip.quantization_scale);
         for pi in proportion_cls_grp1 {
             let pi_q = self.chip.gate().mul(ctx, pi, scale);
@@ -159,9 +164,10 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             let pi_cls_square = self.square(ctx, pi_cls);
             gini_grp1 = self.chip.gate().sub(ctx, gini_grp1, pi_cls_square);
         }
-        let (weight_grp1, _) = self.chip.range_gate().div_mod(ctx, num_group1, num_samples.clone(), num_bits);
+        let (weight_grp1, _) = self.chip.range_gate().div_mod_var(ctx, num_group1, cnt, num_bits * 2, num_bits);
         gini_grp1 = self.chip.gate().mul(ctx, gini_grp1, weight_grp1);
-        gini_grp1 = self.chip.range_gate().div_mod_var(ctx, gini_grp1, weight_grp1, num_bits * 2, num_bits).0;
+        // rescale
+        gini_grp1 = self.chip.range_gate().div_mod(ctx, gini_grp1, fe_to_biguint(scale.value()), num_bits).0;
         let mut gini_grp2 = ctx.load_constant(self.chip.quantization_scale);
         for pi in proportion_cls_grp2 {
             let pi_q = self.chip.gate().mul(ctx, pi, scale);
@@ -169,11 +175,29 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             let pi_cls_square = self.square(ctx, pi_cls);
             gini_grp2 = self.chip.gate().sub(ctx, gini_grp2, pi_cls_square);
         }
-        let (weight_grp2, _) = self.chip.range_gate().div_mod(ctx, num_group2, num_samples, num_bits);
+        let (weight_grp2, _) = self.chip.range_gate().div_mod_var(ctx, num_group2, num_samples, num_bits * 2, num_bits);
         gini_grp2 = self.chip.gate().mul(ctx, gini_grp2, weight_grp2);
-        gini_grp2 = self.chip.range_gate().div_mod_var(ctx, gini_grp2, weight_grp2, num_bits * 2, num_bits).0;
+        gini_grp2 = self.chip.range_gate().div_mod(ctx, gini_grp2, fe_to_biguint(scale.value()), num_bits).0;
         let gini = self.chip.gate().add(ctx, gini_grp1, gini_grp2);
+        // fix for leaf node
+        let fix_zero = self.chip.range_gate().is_less_than_safe(ctx, num_samples, 2);
+        let gini = self.chip.gate().select(ctx, scale, gini, fix_zero);
 
         gini
     }
+
+    // pub fn get_split(
+    //     &self,
+    //     ctx: &mut Context<F>,
+    //     dataset_x: impl IntoIterator<Item = AssignedValue<F>>,
+    //     dataset_y: impl IntoIterator<Item = AssignedValue<F>>,
+    //     masks: impl IntoIterator<Item = AssignedValue<F>>,
+    //     num_feature: usize,
+    //     num_class: usize,
+    // ) -> (AssignedValue<F>, AssignedValue<F>)
+    // where
+    //     F: BigPrimeField
+    // {
+        
+    // }
 }
