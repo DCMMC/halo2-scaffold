@@ -7,6 +7,7 @@ use halo2_base::QuantumCell::{Constant, Existing, Witness};
 use num_bigint::{BigUint};
 use num_integer::Integer;
 
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FixedPointStrategy {
     Vertical, // vanilla implementation with vertical basic gate(s)
