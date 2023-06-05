@@ -133,6 +133,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         }
         let mut cnt = ctx.load_zero();
         for ((x_ij, y_i), mask_i) in targets {
+            warn!("x_ij: {:?}, y_i: {:?}, mask_i: {:?}", self.chip.dequantization(*x_ij.value()), y_i.value(), mask_i.value());
             cnt = self.chip.gate().add(ctx, cnt, mask_i);
             let diff = self.chip.qsub(ctx, x_ij, split);
             let is_less = self.chip.is_neg(ctx, diff);
@@ -142,6 +143,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             let is_greater = self.chip.gate().sub(ctx, one, is_less);
             let is_geater_mask = self.chip.gate().mul(ctx, is_greater, mask_i_copy);
             num_group2 = self.chip.gate().add(ctx, num_group2, is_geater_mask);
+            // warn!("is_less_mask: {:?}, is_greater_mask: {:?}", is_less_mask.value(), is_geater_mask.value());
             for cls_i in 0..num_class {
                 let y_i_copy = self.copy_elem(ctx, &y_i);
                 let is_cls_i = self.chip.gate().is_equal(ctx, y_i_copy, cls_adv[cls_i]);
@@ -151,6 +153,11 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 proportion_cls_grp2[cls_i] = self.chip.gate().add(ctx, proportion_cls_grp2[cls_i], is_cls_i_grp2);
             }
         }
+        warn!(
+            "prop_cls_grp1: {:?}, prop_cls_grp2: {:?}",
+            proportion_cls_grp1.iter().map(|x| x.value()).collect_vec(),
+            proportion_cls_grp2.iter().map(|x| x.value()).collect_vec()
+        );
         // if cnt is zero, change it to one to avoid dividing zero
         let cnt_zero = self.chip.gate().is_zero(ctx, cnt);
         cnt = self.chip.gate().select(ctx, one, cnt, cnt_zero);
@@ -164,11 +171,14 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         num_group2 = self.chip.gate().add(ctx, num_group2, one);
         let mut gini_grp1 = ctx.load_constant(self.chip.quantization_scale);
         for pi in proportion_cls_grp1 {
+            // mul twice
             let pi_q = self.chip.gate().mul(ctx, pi, scale);
+            let pi_q = self.chip.gate().mul(ctx, pi_q, scale);
             let (pi_cls, _) = self.chip.range_gate().div_mod_var(ctx, pi_q, num_group1, num_bits * 2, num_bits);
             let pi_cls_square = self.square(ctx, pi_cls);
             gini_grp1 = self.chip.gate().sub(ctx, gini_grp1, pi_cls_square);
         }
+        println!("gini_grp1: {:?}", self.chip.dequantization(*gini_grp1.value()));
         let (weight_grp1, _) = self.chip.range_gate().div_mod_var(ctx, num_group1, cnt, num_bits * 2, num_bits);
         gini_grp1 = self.chip.gate().mul(ctx, gini_grp1, weight_grp1);
         // rescale
@@ -176,10 +186,12 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         let mut gini_grp2 = ctx.load_constant(self.chip.quantization_scale);
         for pi in proportion_cls_grp2 {
             let pi_q = self.chip.gate().mul(ctx, pi, scale);
+            let pi_q = self.chip.gate().mul(ctx, pi_q, scale);
             let (pi_cls, _) = self.chip.range_gate().div_mod_var(ctx, pi_q, num_group2, num_bits * 2, num_bits);
             let pi_cls_square = self.square(ctx, pi_cls);
             gini_grp2 = self.chip.gate().sub(ctx, gini_grp2, pi_cls_square);
         }
+        println!("gini_grp2: {:?}", self.chip.dequantization(*gini_grp2.value()));
         let (weight_grp2, _) = self.chip.range_gate().div_mod_var(ctx, num_group2, num_samples, num_bits * 2, num_bits);
         gini_grp2 = self.chip.gate().mul(ctx, gini_grp2, weight_grp2);
         gini_grp2 = self.chip.range_gate().div_mod(ctx, gini_grp2, fe_to_biguint(scale.value()), num_bits).0;
@@ -339,7 +351,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 let dataset_y = self.copy_list(ctx, &dataset_y);
                 let cls = self.common_cls(ctx, dataset_y, masks, num_class);
                 let cur_idx = ctx.load_constant(F::from(2u64.pow(layer as u32) - 1 + node_idx as u64));
-                warn!("cur_idx: {:?}, best_slot: {:?}, best_split: {:?}", cur_idx.value(), best_slot.value(), best_split.value());
+                warn!("cur_idx: {:?}, best_slot: {:?}, best_split: {:?}", cur_idx.value(), best_slot.value(), self.chip.dequantization(*best_split.value()));
                 if layer < max_depth - 1 {
                     queue.push(masks_left);
                     queue.push(masks_right);

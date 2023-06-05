@@ -35,7 +35,11 @@ pub fn train<F: ScalarField>(
     println!("decision tree:");
     let cnt = tree.iter().copied().map(|x| fe_to_biguint(x.value()).to_u128().unwrap()).collect::<Vec<u128>>().chunks(5).into_iter().inspect(
         |x| {
-            println!("{:?}", x.into_iter());
+            let mut node = x.clone().iter().copied().map(|x| x as f64).collect_vec();
+            if node[node.len() - 1] == 255.0 {
+                node[1] = chip.chip.dequantization(F::from_u128(node[1] as u128));
+            }
+            println!("{:?}", node);
         }).count();
     println!("#nodes: {:?}", cnt);
 
@@ -123,19 +127,20 @@ fn main() {
         vec![0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
     ];
     mock(train, dataset.clone());
-    let x_dummy = vec![[2.771244718,1.784783929],
-        [1.,1.],
-        [3.,2.],
-        [3.,2.],
-        [2.,2.],
-        [7.,3.],
-        [9.00220326,3.339047188],
-        [7.444542326,0.476683375],
-        [10.12493903,3.234550982],
-        [6.642287351,3.319983761]
-    ].iter().flatten().copied().collect_vec();
-    let dataset_dummy = vec![
-        x_dummy, vec![1., 0., 0., 1., 0., 1., 1., 0., 1., 1.]
-    ];
-    prove(train, dataset, dataset_dummy);
+    // let x_dummy = vec![[2.771244718,1.784783929],
+    //     [1.,1.],
+    //     [3.,2.],
+    //     [3.,2.],
+    //     [2.,2.],
+    //     [7.,3.],
+    //     [9.00220326,3.339047188],
+    //     [7.444542326,0.476683375],
+    //     [10.12493903,3.234550982],
+    //     [6.642287351,3.319983761]
+    // ].iter().flatten().copied().collect_vec();
+    // let dataset_dummy = vec![
+    //     x_dummy, vec![1., 0., 0., 1., 0., 1., 1., 0., 1., 1.]
+    // ];
+    // mock(train, dataset_dummy.clone());
+    // prove(train, dataset, dataset_dummy);
 }
