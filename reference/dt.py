@@ -1,3 +1,4 @@
+# [ref] https://machinelearningmastery.com/implement-decision-tree-algorithm-scratch-python/
 from itertools import chain
 
 # Split a dataset based on an attribute and an attribute value
