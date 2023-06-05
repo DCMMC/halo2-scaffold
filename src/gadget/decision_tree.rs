@@ -1,6 +1,5 @@
 use std::{iter, vec};
-use log::{debug, warn};
-use num_traits::cast::ToPrimitive;
+// use log::{debug, warn};
 use halo2_base::{
     utils::{BigPrimeField, fe_to_biguint},
     Context, AssignedValue, gates::{GateInstructions, RangeInstructions}, QuantumCell
@@ -328,7 +327,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         assert!(max_depth >= 1);
         assert!(num_class >= 2);
         let mask_cls = ctx.load_constant(F::from(MASK_CLS));
-        let min_size = ctx.load_constant(F::from(min_size as u64));
+        let min_size = ctx.load_constant(F::from((min_size + 1) as u64));
         let num_bits = (2 * PRECISION_BITS + 1) as usize;
         let init_mask = vec![ctx.load_constant(F::one()); dataset_y.len()];
         let mut queue = vec![init_mask];

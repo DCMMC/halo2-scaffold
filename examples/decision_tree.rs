@@ -28,7 +28,7 @@ pub fn train<F: ScalarField>(
 
     let num_feature = 2;
     let num_class = 2;
-    let max_depth = 3;
+    let max_depth = 4;
     let min_size = 1;
 
     let tree = chip.train(ctx, x_deq, y_adv, num_feature, num_class, max_depth, min_size);

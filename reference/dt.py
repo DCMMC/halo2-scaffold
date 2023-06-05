@@ -49,7 +49,6 @@ def to_terminal(group):
 
 # Create child splits for a node or make terminal
 def split(node, max_depth, min_size, depth):
-	max_depth = max_depth - 1
 	left, right = node['groups']
 	del(node['groups'])
 	# check for a no split
@@ -76,6 +75,7 @@ def split(node, max_depth, min_size, depth):
 # Build a decision tree
 def build_tree(train, max_depth, min_size):
 	root = get_split(train)
+	max_depth = max_depth - 1
 	split(root, max_depth, min_size, 1)
 	return root
 
