@@ -238,7 +238,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             let dataset_x_tmp = self.copy_list(ctx, &dataset_x);
             let dataset_y_tmp = self.copy_list(ctx, &dataset_y);
             let gini = self.gini(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, slot, num_feature, num_class, split);
-            warn!("gini: {:?}, split: {:?}, slot: {:?}", gini.value(), split.value(), slot);
+            warn!("gini: {:?}, split: {:?}, slot: {:?}", self.chip.dequantization(*gini.value()), self.chip.dequantization(*split.value()), slot);
             let is_better = self.chip.range_gate().is_less_than(ctx, gini, best_gini, num_bits);
             best_gini = self.chip.gate().select(ctx, gini, best_gini, is_better);
             let slot_adv = ctx.load_constant(F::from(slot as u64));

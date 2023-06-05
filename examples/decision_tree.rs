@@ -33,7 +33,7 @@ pub fn train<F: ScalarField>(
 
     let tree = chip.train(ctx, x_deq, y_adv, num_feature, num_class, max_depth, min_size);
     println!("decision tree:");
-    let cnt = tree.iter().copied().map(|x| fe_to_biguint(x.value()).to_u64().unwrap()).collect::<Vec<u64>>().chunks(5).into_iter().inspect(
+    let cnt = tree.iter().copied().map(|x| fe_to_biguint(x.value()).to_u128().unwrap()).collect::<Vec<u128>>().chunks(5).into_iter().inspect(
         |x| {
             println!("{:?}", x.into_iter());
         }).count();
@@ -135,7 +135,7 @@ fn main() {
         [6.642287351,3.319983761]
     ].iter().flatten().copied().collect_vec();
     let dataset_dummy = vec![
-        x_dummy, vec![0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
+        x_dummy, vec![1., 0., 0., 1., 0., 1., 1., 0., 1., 1.]
     ];
     prove(train, dataset, dataset_dummy);
 }
