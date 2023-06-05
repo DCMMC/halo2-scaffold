@@ -126,21 +126,21 @@ fn main() {
         // y
         vec![0., 0., 0., 0., 0., 1., 1., 1., 1., 1.]
     ];
-    mock(train, dataset.clone());
-    // let x_dummy = vec![[2.771244718,1.784783929],
-    //     [1.,1.],
-    //     [3.,2.],
-    //     [3.,2.],
-    //     [2.,2.],
-    //     [7.,3.],
-    //     [9.00220326,3.339047188],
-    //     [7.444542326,0.476683375],
-    //     [10.12493903,3.234550982],
-    //     [6.642287351,3.319983761]
-    // ].iter().flatten().copied().collect_vec();
-    // let dataset_dummy = vec![
-    //     x_dummy, vec![1., 0., 0., 1., 0., 1., 1., 0., 1., 1.]
-    // ];
-    // mock(train, dataset_dummy.clone());
-    // prove(train, dataset, dataset_dummy);
+    // mock(train, dataset.clone());
+    let x_dummy = vec![[2.771244718,1.784783929],
+        [1.,1.],
+        [3.,2.],
+        [3.,2.],
+        [2.,2.],
+        [7.,3.],
+        [9.00220326,3.339047188],
+        [7.444542326,0.476683375],
+        [10.12493903,3.234550982],
+        [6.642287351,3.319983761]
+    ].iter().flatten().copied().collect_vec();
+    let dataset_dummy = vec![
+        x_dummy, vec![1., 0., 0., 1., 0., 1., 1., 0., 1., 1.]
+    ];
+    mock(train, dataset_dummy.clone());
+    prove(train, dataset, dataset_dummy);
 }
