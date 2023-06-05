@@ -49,7 +49,7 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         b: AssignedValue<F>,
         x: impl IntoIterator<Item = impl IntoIterator<Item = QA>>,
         y_truth: impl IntoIterator<Item = QA>,
-        learning_rate: f64
+        learning_rate_batch: f64
     ) -> (Vec<QA>, QA)
     where
         F: BigPrimeField, QA: Into<QuantumCell<F>> + From<AssignedValue<F>> + Copy
@@ -63,8 +63,8 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         let dim = x[0].len();
         assert!(dim == w.len());
 
-        let learning_rate = ctx.load_witness(self.chip.quantization(learning_rate / n_sample));
-        let one = Constant(self.chip.quantization(1.0));
+        let learning_rate = ctx.load_constant(self.chip.quantization(learning_rate_batch));
+        let one = ctx.load_constant(self.chip.quantization_scale);
 
         // h_{\theta}(x) = \frac{1}{1+\exp(-\theta x)}
         let y: Vec<QA> = x.iter().map(|xi| {

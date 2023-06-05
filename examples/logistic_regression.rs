@@ -183,18 +183,22 @@ fn main() {
     let epoch = 1;
     let learning_rate = 0.001;
     let batch_size: usize = 64;
+    let learning_rate_batch = learning_rate / batch_size as f64;
 
     train_native(train_x.clone(), train_y.clone(), learning_rate, epoch, batch_size);
 
     let n_batch = (train_x.len() as f64 / batch_size as f64).ceil() as i64;
-    let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], 0.01);
+    let dummy_inputs = (w.clone(), b.clone(), vec![vec![0.; dim]; batch_size as usize], vec![0.; batch_size as usize], learning_rate_batch);
     let (pk, break_points) = gen_key(train, dummy_inputs);
     for idx_epoch in 0..epoch {
         warn!("Epoch {:?}", idx_epoch + 1);
         for idx_batch in 0..n_batch {
-            let batch_x = (&train_x[idx_batch as usize * batch_size..min(train_x.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
+            if (idx_batch as usize + 1) * batch_size > train_x.len() {
+                continue;
+            }
+            let batch_x = (&train_x[idx_batch as usize * batch_size..(idx_batch as usize + 1) * batch_size]).to_vec();
             let batch_y = (&train_y[idx_batch as usize * batch_size..min(train_y.len(), (idx_batch as usize + 1) * batch_size)]).to_vec();
-            let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate);
+            let private_inputs: (Vec<Fr>, Fr, Vec<Vec<f64>>, Vec<f64>, f64) = (w, b, batch_x, batch_y, learning_rate_batch);
             let out = prove_private(train, private_inputs, &pk, break_points.clone());
             // out = mock(train, private_inputs);
             w = (&out[..dim]).iter().map(|wi| (*wi).clone()).collect();
