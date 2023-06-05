@@ -100,7 +100,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         let x_square = self.chip.gate().mul(ctx, x, x);
         let scale = self.chip.quantization_scale;
         let num_bits = (2 * PRECISION_BITS + 1) as usize;
-        let (res, _) = self.chip.range_gate().div_mod(ctx, x_square, fe_to_biguint(&scale), num_bits);
+        let (res, _) = self.chip.range_gate().div_mod(ctx, x_square, fe_to_biguint(&scale), num_bits * 2);
 
         res
     }
@@ -246,7 +246,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 masks_copy.push(masks_feature[j][i]);
             }
         }
-        let slots = iter::repeat(0..num_feature).take(dataset_x.len() / num_feature).flatten();
+        let slots = iter::repeat(0..num_feature).take(dataset_y.len()).flatten();
         let mut best_slot = ctx.load_zero();
         let mut best_split = self.copy_elem(ctx, &dataset_x[0]);
         // maximum of gini impurity is 0.5, so we set 1.0 as the initial value
@@ -259,7 +259,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             let dataset_x_tmp = self.copy_list(ctx, &dataset_x);
             let dataset_y_tmp = self.copy_list(ctx, &dataset_y);
             let gini = self.gini(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, slot, num_feature, num_class, split);
-            warn!("gini: {:?}, split: {:?}, slot: {:?}", self.chip.dequantization(*gini.value()), self.chip.dequantization(*split.value()), slot);
+            // warn!("gini: {:?}, split: {:?}, slot: {:?}", self.chip.dequantization(*gini.value()), self.chip.dequantization(*split.value()), slot);
             let is_better = self.chip.range_gate().is_less_than(ctx, gini, best_gini, num_bits);
             best_gini = self.chip.gate().select(ctx, gini, best_gini, is_better);
             let slot_adv = ctx.load_constant(F::from(slot as u64));
@@ -303,7 +303,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             out_cls = self.chip.gate().select(ctx, cls[cls_idx], out_cls, is_better);
         }
 
-        println!("common_cls: {:?}", out_cls.value());
+        // println!("common_cls: {:?}", out_cls.value());
         out_cls
     }
 
@@ -351,7 +351,8 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 let (best_slot, best_split) = self.get_split(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, num_feature, num_class);
                 let slot = fe_to_biguint(best_slot.value()).to_usize().unwrap();
                 for (idx, value_idx) in (slot..dataset_x.len()).step_by(num_feature).enumerate() {
-                    let is_left = self.chip.range_gate().is_less_than(ctx, dataset_x[value_idx], best_split, num_bits);
+                    let diff = self.chip.qsub(ctx, dataset_x[value_idx], best_split);
+                    let is_left = self.chip.is_neg(ctx, diff);
                     masks_left[idx] = self.chip.gate().mul(ctx, masks_left[idx], is_left);
                     let is_right = self.chip.gate().not(ctx, is_left);
                     masks_right[idx] = self.chip.gate().mul(ctx, masks_right[idx], is_right);
@@ -360,8 +361,8 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 let dataset_y = self.copy_list(ctx, &dataset_y);
                 let cls = self.common_cls(ctx, dataset_y, masks, num_class);
                 let cur_idx = ctx.load_constant(F::from(2u64.pow(layer as u32) - 1 + node_idx as u64));
-                warn!("cur_idx: {:?}, best_slot: {:?}, best_split: {:?}", cur_idx.value(), best_slot.value(), self.chip.dequantization(*best_split.value()));
-                warn!("masks_left: {:?}, masks_right: {:?}", masks_left.iter().map(|x| x.value()).collect_vec(), masks_right.iter().map(|x| x.value()).collect_vec());
+                // warn!("cur_idx: {:?}, best_slot: {:?}, best_split: {:?}", cur_idx.value(), best_slot.value(), self.chip.dequantization(*best_split.value()));
+                // warn!("masks_left: {:?}, masks_right: {:?}", masks_left.iter().map(|x| x.value()).collect_vec(), masks_right.iter().map(|x| x.value()).collect_vec());
                 if layer < max_depth - 1 {
                     queue.push(masks_left);
                     queue.push(masks_right);
