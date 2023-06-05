@@ -2,6 +2,7 @@ use halo2_base::{
     utils::BigPrimeField,
     QuantumCell, Context, AssignedValue
 };
+use itertools::Itertools;
 use log::warn;
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use std::convert::From;
@@ -41,6 +42,29 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         y
     }
 
+    pub fn train_multi_batch<QA>(
+        &self,
+        ctx: &mut Context<F>,
+        w: impl IntoIterator<Item = AssignedValue<F>>,
+        b: AssignedValue<F>,
+        x: impl IntoIterator<Item = impl IntoIterator<Item = impl IntoIterator<Item = QA>>>,
+        y_truth: impl IntoIterator<Item = impl IntoIterator<Item = QA>>,
+        learning_rate_batch: f64
+    ) -> (Vec<AssignedValue<F>>, AssignedValue<F>)
+    where
+        F: BigPrimeField, QA: Into<QuantumCell<F>> + From<AssignedValue<F>> + Copy
+    {
+        let x_multi_batch = x.into_iter();
+        let y_truth_multi_batch = y_truth.into_iter();
+        let mut w = w.into_iter().collect_vec();
+        let mut b = b;
+        for (cur_x, cur_y) in x_multi_batch.zip(y_truth_multi_batch) {
+            (w, b) = self.train_one_batch(ctx, w, b, cur_x, cur_y, learning_rate_batch);
+        }
+
+        (w, b)
+    }
+
     /// Mini-batch gradient descent for training linear regression
     pub fn train_one_batch<QA>(
         &self,
@@ -50,7 +74,7 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         x: impl IntoIterator<Item = impl IntoIterator<Item = QA>>,
         y_truth: impl IntoIterator<Item = QA>,
         learning_rate_batch: f64
-    ) -> (Vec<QA>, QA)
+    ) -> (Vec<AssignedValue<F>>, AssignedValue<F>)
     where
         F: BigPrimeField, QA: Into<QuantumCell<F>> + From<AssignedValue<F>> + Copy
     {
@@ -118,6 +142,7 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         let diff_b = self.chip.qmul(ctx, learning_rate, partial_b);
         b = self.chip.qsub(ctx, b, diff_b);
 
-        (w.iter().map(|wi| QA::from(*wi)).collect(), QA::from(b))
+        // (w.iter().map(|wi| QA::from(*wi)).collect(), QA::from(b))
+        (w, b)
     }
 }
