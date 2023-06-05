@@ -1,4 +1,5 @@
 use std::{iter, vec};
+use log::{debug, warn};
 use num_traits::cast::ToPrimitive;
 use halo2_base::{
     utils::{BigPrimeField, fe_to_biguint},
@@ -237,6 +238,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             let dataset_x_tmp = self.copy_list(ctx, &dataset_x);
             let dataset_y_tmp = self.copy_list(ctx, &dataset_y);
             let gini = self.gini(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, slot, num_feature, num_class, split);
+            warn!("gini: {:?}, split: {:?}, slot: {:?}", gini.value(), split.value(), slot);
             let is_better = self.chip.range_gate().is_less_than(ctx, gini, best_gini, num_bits);
             best_gini = self.chip.gate().select(ctx, gini, best_gini, is_better);
             let slot_adv = ctx.load_constant(F::from(slot as u64));
@@ -280,6 +282,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
             out_cls = self.chip.gate().select(ctx, cls[cls_idx], out_cls, is_better);
         }
 
+        println!("common_cls: {:?}", out_cls.value());
         out_cls
     }
 
@@ -336,6 +339,7 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 let dataset_y = self.copy_list(ctx, &dataset_y);
                 let cls = self.common_cls(ctx, dataset_y, masks, num_class);
                 let cur_idx = ctx.load_constant(F::from(2u64.pow(layer as u32) - 1 + node_idx as u64));
+                warn!("cur_idx: {:?}, best_slot: {:?}, best_split: {:?}", cur_idx.value(), best_slot.value(), best_split.value());
                 if layer < max_depth - 1 {
                     queue.push(masks_left);
                     queue.push(masks_right);
