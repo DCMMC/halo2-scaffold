@@ -34,8 +34,8 @@ def gini_index(groups, classes):
 def get_split(dataset):
 	class_values = list(set(row[-1] for row in dataset))
 	b_index, b_value, b_score, b_groups = 999, 999, 999, None
-	for index in range(len(dataset[0])-1):
-		for row in dataset:
+	for row in dataset:
+		for index in range(len(dataset[0])-1):
 			groups = test_split(index, row[index], dataset)
 			gini = gini_index(groups, class_values)
 			if gini < b_score:
@@ -49,6 +49,7 @@ def to_terminal(group):
 
 # Create child splits for a node or make terminal
 def split(node, max_depth, min_size, depth):
+	max_depth = max_depth - 1
 	left, right = node['groups']
 	del(node['groups'])
 	# check for a no split
@@ -154,7 +155,7 @@ dataset = [[2.771244718,1.784783929,1],
         [7.444542326,0.476683375,0],
         [10.12493903,3.234550982,1],
         [6.642287351,3.319983761,1]]
-tree = build_tree(dataset, 2, 1)
+tree = build_tree(dataset, 4, 1)
 print_tree(tree)
 # print([i for i in chain.from_iterable(layers(tree))])
 # print([[i['index'], i['value'], i['left']['index'], i['right']['index'], -1] if 'value' in i else [i['index'], 0, i['index'], i['index'], i['cls']] for i in chain.from_iterable(layers(tree))])

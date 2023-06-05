@@ -336,6 +336,10 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         let two = ctx.load_constant(F::from(2u64));
         let zero = ctx.load_zero();
         let mut tree = vec![];
+        let mut idx_list = vec![];
+        for i in 0..dataset_y.len() {
+            idx_list.push(ctx.load_constant(F::from((i * num_feature) as u64)));
+        }
         for layer in 0..max_depth {
             let size = queue.len();
             for node_idx in 0..size {
@@ -349,9 +353,11 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
                 let dataset_y_tmp = self.copy_list(ctx, &dataset_y);
                 let masks_tmp = self.copy_list(ctx, &masks);
                 let (best_slot, best_split) = self.get_split(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, num_feature, num_class);
-                let slot = fe_to_biguint(best_slot.value()).to_usize().unwrap();
-                for (idx, value_idx) in (slot..dataset_x.len()).step_by(num_feature).enumerate() {
-                    let diff = self.chip.qsub(ctx, dataset_x[value_idx], best_split);
+                for idx in 0..dataset_y.len() {
+                    let value_idx = self.chip.gate().add(ctx, best_slot, idx_list[idx]);
+                    let dataset_x_copy = self.copy_list(ctx, &dataset_x);
+                    let value = self.chip.gate().select_from_idx(ctx, dataset_x_copy, value_idx);
+                    let diff = self.chip.qsub(ctx, value, best_split);
                     let is_left = self.chip.is_neg(ctx, diff);
                     masks_left[idx] = self.chip.gate().mul(ctx, masks_left[idx], is_left);
                     let is_right = self.chip.gate().not(ctx, is_left);
