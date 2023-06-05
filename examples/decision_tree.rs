@@ -93,7 +93,20 @@ pub fn inference<F: ScalarField>(
         F::from(0),
         F::from(4),
         F::from(4),
-        F::from(0)];
+        F::from(0),
+        // node 5 (fake node)
+        F::from(0),
+        F::from(0),
+        F::from(5),
+        F::from(5),
+        F::from(0),
+        // node 6 (fake node)
+        F::from(0),
+        F::from(0),
+        F::from(6),
+        F::from(6),
+        F::from(1)
+    ];
 
     let y = chip.inference(ctx, &tree, &x_deq, 3);
     println!("y: {:?}", y);
