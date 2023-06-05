@@ -1,11 +1,15 @@
+use std::{iter, vec};
+use num_traits::cast::ToPrimitive;
 use halo2_base::{
     utils::{BigPrimeField, fe_to_biguint},
     Context, AssignedValue, gates::{GateInstructions, RangeInstructions}, QuantumCell
 };
 use super::fixed_point::{FixedPointChip, FixedPointInstructions};
 use halo2_base::QuantumCell::Constant;
+use itertools::{izip, Itertools};
 
 const PRECISION_BITS: u32 = 63;
+const MASK_CLS: u64 = 255;
 
 #[derive(Clone, Debug)]
 pub struct DecisionTreeChip<F: BigPrimeField> {
@@ -186,18 +190,174 @@ impl<F: BigPrimeField> DecisionTreeChip<F> {
         gini
     }
 
-    // pub fn get_split(
-    //     &self,
-    //     ctx: &mut Context<F>,
-    //     dataset_x: impl IntoIterator<Item = AssignedValue<F>>,
-    //     dataset_y: impl IntoIterator<Item = AssignedValue<F>>,
-    //     masks: impl IntoIterator<Item = AssignedValue<F>>,
-    //     num_feature: usize,
-    //     num_class: usize,
-    // ) -> (AssignedValue<F>, AssignedValue<F>)
-    // where
-    //     F: BigPrimeField
-    // {
-        
-    // }
+    fn copy_list(
+        &self,
+        ctx: &mut Context<F>,
+        x: &[AssignedValue<F>]
+    ) -> Vec<AssignedValue<F>>
+    where
+        F: BigPrimeField
+    {
+        let mut copy = vec![];
+        for x_i in x.into_iter() {
+            copy.push(self.copy_elem(ctx, &x_i));
+        }
+
+        copy
+    }
+
+    pub fn get_split(
+        &self,
+        ctx: &mut Context<F>,
+        dataset_x: impl IntoIterator<Item = AssignedValue<F>>,
+        dataset_y: impl IntoIterator<Item = AssignedValue<F>>,
+        masks: impl IntoIterator<Item = AssignedValue<F>>,
+        num_feature: usize,
+        num_class: usize,
+    ) -> (AssignedValue<F>, AssignedValue<F>)
+    where
+        F: BigPrimeField
+    {
+        let num_bits = (2 * PRECISION_BITS + 1) as usize;
+        let dataset_x: Vec<AssignedValue<F>> = dataset_x.into_iter().collect();
+        let dataset_x_copy = self.copy_list(ctx, &dataset_x);
+        let dataset_y: Vec<AssignedValue<F>> = dataset_y.into_iter().collect();
+        let masks: Vec<AssignedValue<F>> = masks.into_iter().collect();
+        let masks_copy = self.copy_list(ctx, &masks);
+        let slots = iter::repeat(0..num_feature).take(dataset_x.len() / num_feature).flatten();
+        let mut best_slot = ctx.load_zero();
+        let mut best_split = self.copy_elem(ctx, &dataset_x[0]);
+        // maximum of gini impurity is 0.5, so we set 1.0 as the initial value
+        let mut best_gini = ctx.load_constant(self.chip.quantization_scale);
+        for (slot, split, mask) in izip!(slots.into_iter(), dataset_x_copy.into_iter(), masks_copy.into_iter()) {
+            let mut masks_tmp = self.copy_list(ctx, &masks);
+            for i in 0..masks_tmp.len() {
+                masks_tmp[i] = self.chip.gate().mul(ctx, masks_tmp[i], mask);
+            }
+            let dataset_x_tmp = self.copy_list(ctx, &dataset_x);
+            let dataset_y_tmp = self.copy_list(ctx, &dataset_y);
+            let gini = self.gini(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, slot, num_feature, num_class, split);
+            let is_better = self.chip.range_gate().is_less_than(ctx, gini, best_gini, num_bits);
+            best_gini = self.chip.gate().select(ctx, gini, best_gini, is_better);
+            let slot_adv = ctx.load_constant(F::from(slot as u64));
+            best_slot = self.chip.gate().select(ctx, slot_adv, best_slot, is_better);
+            best_split = self.chip.gate().select(ctx, split, best_split, is_better);
+        }
+
+        (best_slot, best_split)
+    }
+
+    /// get the most common class of a given group of samples
+    fn common_cls(
+        &self,
+        ctx: &mut Context<F>,
+        dataset_y: impl IntoIterator<Item = AssignedValue<F>>,
+        masks: impl IntoIterator<Item = AssignedValue<F>>,
+        num_class: usize,
+    ) -> AssignedValue<F>
+    where
+        F: BigPrimeField
+    {
+        let num_bits = (2 * PRECISION_BITS + 1) as usize;
+        let mut cls = vec![];
+        let mut cnt_cls = vec![];
+        for i in 0..num_class {
+            cls.push(ctx.load_constant(F::from(i as u64)));
+            cnt_cls.push(ctx.load_zero());
+        }
+        for (yi, mask) in dataset_y.into_iter().zip(masks.into_iter()) {
+            for i in 0..num_class {
+                let is_cls = self.chip.gate().is_equal(ctx, yi, cls[i]);
+                let is_cls_mask = self.chip.gate().mul(ctx, is_cls, mask);
+                cnt_cls[i] = self.chip.gate().add(ctx, cnt_cls[i], is_cls_mask);
+            }
+        }
+        let mut out_cls = ctx.load_zero();
+        let mut max_cnt = ctx.load_zero();
+        for (cls_idx, cnt) in cnt_cls.iter().enumerate() {
+            let is_better = self.chip.range_gate().is_less_than(ctx, max_cnt, *cnt, num_bits);
+            max_cnt = self.chip.gate().select(ctx, *cnt, max_cnt, is_better);
+            out_cls = self.chip.gate().select(ctx, cls[cls_idx], out_cls, is_better);
+        }
+
+        out_cls
+    }
+
+    pub fn train(
+        &self,
+        ctx: &mut Context<F>,
+        dataset_x: impl IntoIterator<Item = AssignedValue<F>>,
+        dataset_y: impl IntoIterator<Item = AssignedValue<F>>,
+        num_feature: usize,
+        num_class: usize,
+        max_depth: usize,
+        min_size: usize
+    ) -> Vec<AssignedValue<F>>
+    where
+        F: BigPrimeField
+    {
+        // construct a complete binary tree with depth = max_depth
+        let dataset_x = dataset_x.into_iter().collect_vec();
+        let dataset_y = dataset_y.into_iter().collect_vec();
+        assert!(dataset_x.len() == dataset_y.len() * num_feature);
+        assert!(min_size >= 1);
+        assert!(max_depth >= 1);
+        assert!(num_class >= 2);
+        let mask_cls = ctx.load_constant(F::from(MASK_CLS));
+        let min_size = ctx.load_constant(F::from(min_size as u64));
+        let num_bits = (2 * PRECISION_BITS + 1) as usize;
+        let init_mask = vec![ctx.load_constant(F::one()); dataset_x.len()];
+        let mut queue = vec![init_mask];
+        let one = ctx.load_constant(F::one());
+        let two = ctx.load_constant(F::from(2u64));
+        let zero = ctx.load_zero();
+        let mut tree = vec![];
+        for layer in 0..max_depth {
+            let size = queue.len();
+            for node_idx in 0..size {
+                let masks = queue.remove(0);
+                let masks_copy = self.copy_list(ctx, &masks);
+                let cnt_sample = self.chip.qsum(ctx, masks_copy);
+                let leaf = self.chip.range_gate().is_less_than(ctx, cnt_sample, min_size, num_bits);
+                let mut masks_left = self.copy_list(ctx, &masks);
+                let mut masks_right = self.copy_list(ctx, &masks);
+                let dataset_x_tmp = self.copy_list(ctx, &dataset_x);
+                let dataset_y_tmp = self.copy_list(ctx, &dataset_y);
+                let masks_tmp = self.copy_list(ctx, &masks);
+                let (best_slot, best_split) = self.get_split(ctx, dataset_x_tmp, dataset_y_tmp, masks_tmp, num_feature, num_class);
+                let slot = fe_to_biguint(best_slot.value()).to_usize().unwrap();
+                for (idx, value_idx) in (slot..dataset_x.len()).step_by(num_feature).enumerate() {
+                    let is_left = self.chip.range_gate().is_less_than(ctx, dataset_x[value_idx], best_split, num_bits);
+                    masks_left[idx] = self.chip.gate().mul(ctx, masks_left[idx], is_left);
+                    let is_right = self.chip.gate().not(ctx, is_left);
+                    masks_right[idx] = self.chip.gate().mul(ctx, masks_right[idx], is_right);
+                }
+
+                let dataset_y = self.copy_list(ctx, &dataset_y);
+                let cls = self.common_cls(ctx, dataset_y, masks, num_class);
+                let cur_idx = ctx.load_constant(F::from(2u64.pow(layer as u32) - 1 + node_idx as u64));
+                if layer < max_depth - 1 {
+                    queue.push(masks_left);
+                    queue.push(masks_right);
+                    let cls = self.chip.gate().select(ctx, cls, mask_cls, leaf);
+                    let left_child = self.chip.gate().mul_add(ctx, cur_idx, two, one);
+                    let right_child = self.chip.gate().mul_add(ctx, cur_idx, two, two);
+                    let left_child = self.chip.gate().select(ctx, cur_idx, left_child, leaf);
+                    let right_child = self.chip.gate().select(ctx, cur_idx, right_child, leaf);
+                    let best_slot = self.chip.gate().select(ctx, zero, best_slot, leaf);
+                    let best_split = self.chip.gate().select(ctx, zero, best_split, leaf);
+
+                    let node = vec![best_slot, best_split, left_child, right_child, cls];
+                    tree.push(node);
+                } else {
+                    // termin all nodes to be leaf nodes in last layer of the decision tree
+                    let left_child = self.copy_elem(ctx, &cur_idx);
+                    let right_child = cur_idx;
+                    let node = vec![zero, zero, left_child, right_child, cls];
+                    tree.push(node);
+                }
+            }
+        }
+        tree.iter().flatten().copied().collect_vec()
+    }
 }

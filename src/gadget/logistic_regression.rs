@@ -57,7 +57,6 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         let y_truth: Vec<QA> = y_truth.into_iter().collect();
         let x: Vec<Vec<QA>> = x.into_iter().map(|xi| xi.into_iter().collect()).collect();
         let n_sample = x.len() as f64;
-        // debug!("n_sample: {:?}", n_sample);
 
         let mut w: Vec<AssignedValue<F>> = w.into_iter().collect();
         let mut b = b;
@@ -65,6 +64,7 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
         assert!(dim == w.len());
 
         let learning_rate = ctx.load_witness(self.chip.quantization(learning_rate / n_sample));
+        let one = Constant(self.chip.quantization(1.0));
 
         // h_{\theta}(x) = \frac{1}{1+\exp(-\theta x)}
         let y: Vec<QA> = x.iter().map(|xi| {
@@ -72,7 +72,6 @@ impl<F: BigPrimeField> LogisticRegressionChip<F> {
             let logit = self.chip.qadd(ctx, wx, b);
             let neg_logit = self.chip.neg(ctx, logit);
             let exp_logit = self.chip.qexp(ctx, neg_logit);
-            let one = Constant(self.chip.quantization(1.0));
             let exp_logit_p1 = self.chip.qadd(ctx, exp_logit, one);
             let yi = self.chip.qdiv(ctx, one, exp_logit_p1);
 
