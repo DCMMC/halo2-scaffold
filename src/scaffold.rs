@@ -356,7 +356,9 @@ pub fn prove<T: Copy>(
         .expect("proof generation failed");
         let proof = transcript.finalize();
 
-        proof
+        let instances = &vec![public_io];
+        let final_proof = encode_calldata(instances, &proof);
+        final_proof
     };
 
     proof
