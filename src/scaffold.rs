@@ -356,12 +356,12 @@ pub fn prove<T: Copy>(
         .expect("proof generation failed");
         let proof = transcript.finalize();
 
-        let instances = &vec![public_io];
-        let final_proof = encode_calldata(instances, &proof);
-        final_proof
+        proof
     };
 
-    proof
+    let instances = &vec![public_io];
+    let final_proof = encode_calldata(instances, &proof);
+    final_proof
 }
 
 #[derive(Clone, Debug)]

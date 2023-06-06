@@ -64,8 +64,9 @@ fn main() {
     mock(some_algorithm_in_zk, [Fr::from(201), Fr::from(100), Fr::from(200)]);
 
     // uncomment below to run actual prover:
-    prove(
+    let p = prove(
         some_algorithm_in_zk, 
         [Fr::from(101), Fr::from(100), Fr::from(200)], 
         [Fr::from(99), Fr::from(100), Fr::from(200)]);
+    println!("{p:?}");
 }
