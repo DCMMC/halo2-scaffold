@@ -9,35 +9,22 @@ use halo2_base::QuantumCell::Constant;
 
 fn some_algorithm_in_zk<F: ScalarField>(
     ctx: &mut Context<F>,
-    values: [F; 3],
+    values: [F; 9],
     make_public: &mut Vec<AssignedValue<F>>,
 ) {
-    // `Context` can roughly be thought of as a single-threaded execution trace of a program we want to ZK prove. We do some post-processing on `Context` to optimally divide the execution trace into multiple columns in a PLONKish arithmetization
-    // More advanced usage with multi-threaded witness generation is possible, but we do not explain it here
-
-    // lookup bits must agree with the size of the lookup table, which is specified by an environmental variable
     let lookup_bits =
         var("LOOKUP_BITS").unwrap_or_else(|_| panic!("LOOKUP_BITS not set")).parse().unwrap();
-    // first we load a private input `x`
-    // let x = ctx.load_witness(x);
-    // make it public
-    // make_public.push(x);
-
-    // create a Range chip that contains methods for basic arithmetic operations
     let range = RangeChip::default(lookup_bits);
-
     // check that `x` is in [0, 2^64)
     let range_bits = 64;
-    let x = ctx.load_witness(values[0]);
-    let lower = Constant(values[1]);
-    let upper = Constant(values[2]);
-    let lower_assigned = range.gate().add(ctx, lower, Constant(F::zero()));
-    let upper_assigned = range.gate().add(ctx, upper, Constant(F::zero()));
-    make_public.extend([lower_assigned, upper_assigned]);
-    // make_public.extend([x]);
+    let values = values.map(|x| ctx.load_witness(x));
+    let lower_assigned = values[7];
+    let upper_assigned = values[8];
+    make_public.extend([values[6], lower_assigned, upper_assigned]);
+    let x = range.gate().select_from_idx(ctx, (&values[0..6]).to_vec(), values[6]);
     range.range_check(ctx, x, range_bits);
-    // range.range_check(ctx, lower, range_bits);
-    // range.range_check(ctx, upper, range_bits);
+    range.range_check(ctx, lower_assigned, range_bits);
+    range.range_check(ctx, upper_assigned, range_bits);
     range.is_less_than(ctx, lower_assigned, upper_assigned, range_bits);
     let a = range.is_less_than(ctx, x, lower_assigned, range_bits);
     let b = range.is_less_than(ctx, x, upper_assigned, range_bits);
@@ -45,11 +32,8 @@ fn some_algorithm_in_zk<F: ScalarField>(
     let out_b = range.gate().is_equal(ctx, b, Constant(F::one()));
     let out_ab = range.gate().and(ctx, out_a, out_b);
     let out = range.gate().is_equal(ctx, out_ab, Constant(F::one()));
-    println!("range check: {:?} <= {:?} < {:?} : {:?}", lower.value(), x.value(), upper.value(), out.value());
+    // println!("range check: {:?} <= {:?} < {:?} : {:?}", lower_assigned.value(), x.value(), upper_assigned.value(), out.value());
     make_public.push(out);
-
-    // RangeChip contains GateChip so you can still do basic operations:
-    // let _sum = range.gate().add(ctx, x, x);
 }
 
 fn main() {
@@ -60,13 +44,16 @@ fn main() {
     // set_var("GEN_AGG_EVM", "params/zk_range_agg_evm.code");
 
     // run mock prover
-    mock(some_algorithm_in_zk, [Fr::from(101), Fr::from(100), Fr::from(200)]);
-    mock(some_algorithm_in_zk, [Fr::from(201), Fr::from(100), Fr::from(200)]);
-
     // uncomment below to run actual prover:
     let p = prove(
         some_algorithm_in_zk, 
-        [Fr::from(101), Fr::from(100), Fr::from(200)], 
-        [Fr::from(99), Fr::from(100), Fr::from(200)]);
+        [
+            Fr::from(99), Fr::from(120), Fr::from(0), Fr::from(0), Fr::from(0), Fr::from(0),
+            Fr::from(1), Fr::from(100), Fr::from(200)
+        ],
+        [
+            Fr::from(99), Fr::from(0), Fr::from(0), Fr::from(0), Fr::from(0), Fr::from(0),
+            Fr::from(0), Fr::from(100), Fr::from(200)
+        ]);
     println!("{p:?}");
 }
